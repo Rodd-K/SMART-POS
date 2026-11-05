@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SmartPOS</title>
+<style>
+*{box-sizing:border-box;margin:0}
+body{font:15px/1.4 ui-rounded,"Nunito","Segoe UI",system-ui,sans-serif;min-height:100vh;color:var(--ink);background:var(--bg);transition:background .4s,color .4s}
+body.login{--bg:linear-gradient(135deg,#4D6BFF,#9B5DE5 55%,#F15BB5);--ink:#1B1F3B;--panel:#fff;--mut:#6B7194;--acc:#4D6BFF;--line:#DCE2FF}
+body.pos{--bg:#EEF2FF;--ink:#1B1F3B;--panel:#fff;--mut:#6B7194;--acc:#4D6BFF;--line:#DCE2FF}
+body.adm{--bg:#0F1020;--ink:#ECEEFF;--panel:#1A1B33;--mut:#9094BF;--acc:#7C5CFF;--line:#2A2C4D}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;border:0;border-radius:10px;padding:.6rem 1rem;background:var(--acc);color:#fff;font-weight:700;transition:transform .12s,filter .2s,opacity .2s}
+button:hover{filter:brightness(1.12)}button:active{transform:scale(.95)}button:disabled{opacity:.4;cursor:not-allowed;filter:none}
+button.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}button.bad{background:#FF4D6D}
+input,select{width:100%;padding:.6rem .8rem;border-radius:10px;border:1.5px solid var(--line);background:var(--panel);color:var(--ink)}
+:is(input,select,button):focus-visible{outline:3px solid color-mix(in srgb,var(--acc) 45%,transparent);outline-offset:1px}
+.center{min-height:100vh;display:grid;place-items:center;padding:1rem}
+.card{background:var(--panel);border-radius:22px;padding:2rem;width:min(380px,100%);box-shadow:0 20px 60px #0003;display:grid;gap:1rem}
+.logo{font-size:1.4rem;font-weight:900;letter-spacing:-.02em}.logo span{color:var(--acc)}
+.top{display:flex;align-items:center;gap:1rem;padding:.8rem 1.2rem;background:var(--panel);border-bottom:1.5px solid var(--line)}.top .logo{margin-right:auto}
+.posgrid{display:grid;grid-template-columns:1fr 380px;gap:1.2rem;padding:1.2rem;align-items:start}
+.bar{display:grid;gap:.7rem;margin-bottom:1rem}
+.chips{display:flex;gap:.5rem;flex-wrap:wrap}
+.chip{background:var(--panel);color:var(--ink);border:1.5px solid var(--line);padding:.35rem .9rem;border-radius:99px}
+.chip.on{background:var(--c,var(--acc));border-color:var(--c,var(--acc));color:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.8rem}
+.tile{--c:#4D6BFF;background:linear-gradient(145deg,var(--c),color-mix(in srgb,var(--c) 70%,#000));text-align:left;display:grid;gap:.15rem;padding:1rem;min-height:118px;border-radius:18px;align-content:space-between;box-shadow:0 8px 18px color-mix(in srgb,var(--c) 35%,transparent)}
+.tile small{opacity:.85;font-weight:600}.tile b{font-size:1.02rem}.tile span{font-size:1.15rem;font-weight:900}.tile i{font-style:normal;font-size:.8rem;opacity:.9}
+.tile.pop{animation:pop .3s}@keyframes pop{50%{transform:scale(1.07)}}
+.cart{background:var(--panel);border-radius:20px;padding:1.2rem;position:sticky;top:1rem;display:grid;gap:.8rem}
+.lines{display:grid;gap:.5rem;max-height:34vh;overflow:auto}
+.line{display:grid;grid-template-columns:1fr auto auto;gap:.6rem;align-items:center;padding:.5rem .6rem;border-radius:12px;background:color-mix(in srgb,var(--c) 14%,var(--panel));border-left:5px solid var(--c);animation:in .25s}
+@keyframes in{from{opacity:0;transform:translateX(12px)}}
+.qty{display:flex;align-items:center;gap:.4rem}.qty button{padding:.15rem .55rem;background:var(--c)}
+.total{display:flex;justify-content:space-between;font-size:1.5rem;font-weight:900}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:.4rem}.seg button{background:transparent;color:var(--ink);border:1.5px solid var(--line)}.seg button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.quick{display:flex;gap:.4rem;flex-wrap:wrap}.quick button{padding:.3rem .7rem;font-size:.85rem}
+.mut{color:var(--mut)}.empty{color:var(--mut);padding:1rem 0}
+.ov{position:fixed;inset:0;background:#0008;display:grid;place-items:center;padding:1rem;z-index:5;animation:fade .2s}@keyframes fade{from{opacity:0}}
+.modal{background:var(--panel);color:var(--ink);border-radius:20px;padding:1.5rem;width:min(440px,100%);max-height:92vh;overflow:auto;display:grid;gap:.9rem;animation:rise .25s}@keyframes rise{from{transform:translateY(20px);opacity:0}}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:.7rem}.form label{display:grid;gap:.25rem;font-weight:600;font-size:.85rem}.form label:first-child{grid-column:1/-1}
+.acts{display:flex;gap:.6rem;justify-content:flex-end}
+.rc{font-family:ui-monospace,Menlo,monospace;font-size:.85rem;display:grid;gap:.3rem}.rc div{display:flex;justify-content:space-between;gap:1rem}
+.toast{position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);background:#1B1F3B;color:#fff;padding:.7rem 1.2rem;border-radius:12px;z-index:9;animation:rise .25s;border-left:5px solid #2EE6A6}.toast.err{border-color:#FF4D6D}
+.adm .shell{display:grid;grid-template-columns:210px 1fr;min-height:100vh}
+.side{background:#0A0B18;padding:1.2rem;display:flex;flex-direction:column;gap:.4rem;border-right:1.5px solid var(--line)}.side .logo{margin-bottom:1rem}
+.side button{background:transparent;text-align:left;color:var(--mut)}.side button.on{background:var(--acc);color:#fff}.side .out{margin-top:auto}
+.xrow{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.9rem 1rem;margin-bottom:.6rem;border:1.5px solid var(--line);border-radius:12px}.xrow p{margin:.2rem 0 0}
+.main{padding:1.6rem;display:grid;gap:1.2rem;align-content:start;min-width:0}.main h2{font-size:1.5rem}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem}
+.kpi{background:var(--panel);border-radius:16px;padding:1rem 1.2rem;border-left:5px solid var(--k)}.kpi b{display:block;font-size:1.6rem;color:var(--k)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem}
+.pnl{background:var(--panel);border-radius:16px;padding:1.2rem;display:grid;gap:.7rem;align-content:start;min-width:0}
+.wk{display:flex;gap:.6rem;align-items:flex-end;height:170px}.wk div{flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:.3rem}
+.wk i{width:100%;border-radius:8px 8px 0 0;background:linear-gradient(#7C5CFF,#F15BB5);animation:grow .7s cubic-bezier(.2,.8,.2,1)}@keyframes grow{from{height:0}}
+.hb{display:grid;gap:.2rem}.hb i{display:block;height:8px;border-radius:9px;background:#2EE6A6;animation:wide .7s}@keyframes wide{from{width:0}}
+.tw{overflow:auto;background:var(--panel);border-radius:16px}table{border-collapse:collapse;width:100%}th,td{padding:.7rem 1rem;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--mut);font-weight:600}tr:last-child td{border:0}
+.pill{display:inline-block;padding:.15rem .7rem;border-radius:99px;background:color-mix(in srgb,var(--c) 25%,transparent);color:var(--c);font-weight:700;font-size:.82rem}
+.row{display:flex;gap:.7rem;align-items:center}.row input{max-width:300px}
+@media(max-width:900px){.posgrid{grid-template-columns:1fr}.cart{position:static}.adm .shell{grid-template-columns:1fr}.side{flex-direction:row;flex-wrap:wrap}.side .out{margin:0}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media print{body *{visibility:hidden}#rc,#rc *{visibility:visible}#rc{position:absolute;left:0;top:0;width:100%}.acts{display:none}}
+</style></head><body><div id="app"></div>
+<script>
+const $=(s,r=document)=>r.querySelector(s),app=$('#app');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money=n=>'KES '+Number(n).toLocaleString('en-KE',{maximumFractionDigits:2});
+const PAL=['#FF5D73','#FF9F1C','#17B890','#4D96FF','#9B5DE5','#F15BB5','#00A6A6','#E8B100'];
+const col=c=>PAL[[...String(c)].reduce((a,x)=>(a*31+x.charCodeAt(0))>>>0,7)%PAL.length];
+let T=localStorage.getItem('spos'),ME,P=[],cart={},cat='All',method='cash',ref=crypto.randomUUID(),tab='over';
+
+async function api(p,m='GET',b){
+ const r=await fetch('/api/'+p,{method:m,headers:{'Content-Type':'application/json',Authorization:'Bearer '+T},body:b?JSON.stringify(b):undefined});
+ const j=await r.json().catch(()=>({}));
+ if(r.status===401&&p!=='login'){localStorage.removeItem('spos');T=null;loginView()}
+ if(!r.ok)throw new Error(j.error||'Something went wrong');return j}
+function toast(t,err){const e=document.createElement('div');e.className='toast'+(err?' err':'');e.textContent=t;document.body.append(e);setTimeout(()=>e.remove(),2800)}
+function modal(h){closeModal();const o=document.createElement('div');o.className='ov';o.id='ov';o.innerHTML=`<div class="modal">${h}</div>`;o.onclick=e=>{if(e.target==o)closeModal()};document.body.append(o)}
+const closeModal=()=>$('#ov')?.remove();
+async function logout(){try{await api('logout','POST')}catch{}localStorage.removeItem('spos');T=null;loginView()}
+
+function loginView(){
+ document.body.className='login';
+ app.innerHTML=`<div class=center><form class=card id=f><div class=logo>Smart<span>POS</span></div><p class=mut>Sign in to start your shift.</p>
+ <input name=u placeholder="Username" autocomplete=username autofocus required><input name=p type=password placeholder="Password" autocomplete=current-password required><button>Sign in</button></form></div>`;
+ $('#f').onsubmit=async e=>{e.preventDefault();const f=e.target;
+  try{const r=await api('login','POST',{username:f.u.value,password:f.p.value});T=r.token;localStorage.setItem('spos',T);ME=r.user;route()}
+  catch(x){toast(x.message,1)}}}
+
+async function route(){ME.role=='admin'?adm():pos()}
+
+/* ---------- Cashier ---------- */
+async function pos(){
+ document.body.className='pos';cart={};cat='All';method='cash';
+ app.innerHTML=`<header class=top><b class=logo>Smart<span>POS</span></b><span class=mut>${esc(ME.name)}</span><button class=ghost onclick=logout()>Sign out</button></header>
+ <main class=posgrid><section><div class=bar><input id=q placeholder="Search products or scan a barcode" autofocus><div id=chips class=chips></div></div><div id=grid class=grid></div></section>
+ <aside class=cart><h3>Current sale</h3><div id=lines class=lines></div><div class=total><span>Total</span><span id=tot></span></div>
+ <div class=seg><button data-m=cash class=on>Cash</button><button data-m=mpesa>M-Pesa${ME.mode=='simulated'?' (simulated)':''}</button></div>
+ <div id=phonebox style="display:none"><input id=phone inputmode=tel placeholder="Customer phone, e.g. 0712345678"></div><div id=cashbox><input id=tend inputmode=decimal placeholder="Cash received"><div class=quick id=quick></div><p id=chg class=mut></p></div>
+ <button id=pay disabled>Charge</button></aside></main>`;
+ P=await api('products');chips();grid();lines();
+ $('#q').oninput=grid;
+ $('#q').onkeydown=e=>{if(e.key=='Enter'){const b=P.find(p=>p.barcode&&p.barcode==e.target.value.trim());if(b){add(b.id);e.target.value='';grid()}}};
+ $('#grid').onclick=e=>{const t=e.target.closest('.tile');if(t){add(t.dataset.id);t.classList.remove('pop');void t.offsetWidth;t.classList.add('pop')}};
+ $('#chips').onclick=e=>{const c=e.target.closest('.chip');if(c){cat=c.dataset.c;chips();grid()}};
+ $('#lines').onclick=e=>{const b=e.target.closest('[data-d]');if(b){chg(b.dataset.id,+b.dataset.d)}};
+ $('.seg').onclick=e=>{const b=e.target.closest('button');if(!b)return;method=b.dataset.m;document.querySelectorAll('.seg button').forEach(x=>x.classList.toggle('on',x==b));upd()};
+ $('#tend').oninput=upd;$('#phone').oninput=upd;$('#pay').onclick=charge;
+ $('#quick').onclick=e=>{if(e.target.dataset.v){$('#tend').value=e.target.dataset.v;upd()}}}
+function chips(){const cs=['All',...new Set(P.map(p=>p.category))];$('#chips').innerHTML=cs.map(c=>`<button class="chip ${c==cat?'on':''}" style="--c:${c=='All'?'#1B1F3B':col(c)}" data-c="${esc(c)}">${esc(c)}</button>`).join('')}
+function grid(){const t=$('#q').value.trim().toLowerCase();
+ $('#grid').innerHTML=P.filter(p=>(cat=='All'||p.category==cat)&&(p.name.toLowerCase().includes(t)||(t&&p.barcode==t))).map(p=>`<button class=tile style="--c:${col(p.category)}" data-id="${p.id}" ${+p.stock<1?'disabled':''}><small>${esc(p.category)}</small><b>${esc(p.name)}</b><span>${money(p.price)}</span><i>${+p.stock<1?'Sold out':p.stock+' left'}</i></button>`).join('')||'<p class=empty>No products match. Try another search or category.</p>'}
+function add(id){const p=P.find(x=>x.id==id);if(!p)return;if((cart[id]||0)>=+p.stock)return toast(`Only ${p.stock} of ${p.name} in stock`,1);cart[id]=(cart[id]||0)+1;lines()}
+function chg(id,d){const p=P.find(x=>x.id==id);const n=(cart[id]||0)+d;if(n<1)delete cart[id];else if(n<=+p.stock)cart[id]=n;else toast(`Only ${p.stock} in stock`,1);lines()}
+const sum=()=>Object.entries(cart).reduce((a,[id,n])=>a+n*+P.find(p=>p.id==id).price,0);
+function lines(){
+ const e=Object.entries(cart);
+ $('#lines').innerHTML=e.map(([id,n])=>{const p=P.find(x=>x.id==id);return`<div class=line style="--c:${col(p.category)}"><div><b>${esc(p.name)}</b><div class=mut>${money(p.price)}</div></div><div class=qty><button data-id="${id}" data-d=-1 aria-label="Remove one">−</button><b>${n}</b><button data-id="${id}" data-d=1 aria-label="Add one">+</button></div><b>${money(n*p.price)}</b></div>`}).join('')||'<p class=empty>Tap a product to start a sale.</p>';
+ const t=sum();$('#quick').innerHTML=t?[`<button class=ghost data-v="${t}">Exact</button>`,...[100,200,500,1000,2000].filter(v=>v>=t).slice(0,3).map(v=>`<button class=ghost data-v="${v}">${v}</button>`)].join(''):'';upd()}
+function upd(){
+ const t=sum(),m=method=='mpesa',v=+$('#tend').value||0;
+ $('#tot').textContent=money(t);$('#cashbox').style.display=m?'none':'';$('#phonebox').style.display=m&&ME.mode!='simulated'?'':'none';
+ $('#chg').textContent=!t?'':v>=t?`Change: ${money(v-t)}`:v?`Short by ${money(t-v)}`:'';
+ const live=m&&ME.mode!='simulated';$('#pay').disabled=!t||(!m&&v<t)||(live&&$('#phone').value.replace(/\D/g,'').length<9);$('#pay').textContent=m?(live?'Send M-Pesa prompt':'Charge M-Pesa (simulated)'):'Charge cash'}
+async function charge(){
+ if(method=='mpesa'&&ME.mode!='simulated')return mpesaPay();
+ const b=$('#pay');b.disabled=true;
+ try{const r=await api('sales','POST',{client_ref:ref,method,tendered:$('#tend').value,items:Object.entries(cart).map(([product_id,qty])=>({product_id,qty}))});
+  ref=crypto.randomUUID();cart={};$('#tend').value='';P=await api('products');grid();lines();receipt(r)}
+ catch(x){toast(x.message,1);upd()}}
+async function mpesaPay(){
+ $('#pay').disabled=true;let stop=0;const myref=ref,phone=$('#phone').value;
+ try{await api('mpesa/start','POST',{client_ref:myref,phone,items:Object.entries(cart).map(([product_id,qty])=>({product_id,qty}))})}
+ catch(x){toast(x.message,1);return upd()}
+ modal(`<h3>Waiting for the customer</h3><p>A payment prompt was sent to ${esc(phone)}. Ask the customer to enter their M-Pesa PIN.</p><div class=acts><button class=ghost id=stp>Stop waiting</button></div>`);
+ $('#stp').onclick=()=>{stop=1;closeModal();ref=crypto.randomUUID();toast('Stopped waiting. If the customer still pays, the sale will appear under Sales.',1);upd()};
+ const why={cancelled:'The customer cancelled the payment',failed:'The payment failed',timeout:'No response from the customer',paid_review:'Payment received but stock changed. Ask the admin to review'};
+ while(!stop){await new Promise(r=>setTimeout(r,3000));if(stop)break;
+  try{const s=await api('mpesa/status/'+myref);
+   if(s.status=='paid'){stop=1;ref=crypto.randomUUID();cart={};P=await api('products');grid();lines();receipt(s.sale);break}
+   if(s.status!='pending'){stop=1;closeModal();ref=crypto.randomUUID();toast(why[s.status]||s.result_desc,1);upd()}}catch(x){}}}
+function receipt(s){modal(`<div id=rc class=rc><b style="font-size:1.1rem;text-align:center">SmartPOS</b><div><span>${esc(s.receipt_no)}</span><span>${esc(s.created_at.replace('T',' '))}</span></div><div><span>Cashier</span><span>${esc(s.cashier_name)}</span></div><hr>
+ ${s.items.map(i=>`<div><span>${i.qty} × ${esc(i.product_name)}</span><span>${money(i.line_total)}</span></div>`).join('')}<hr>
+ <div><b>Total</b><b>${money(s.total)}</b></div><div><span>${s.method=='mpesa'?'M-Pesa '+esc(s.payment_ref):'Cash received'}</span><span>${money(s.tendered)}</span></div><div><span>Change</span><span>${money(s.change)}</span></div><p style="text-align:center">Thank you!</p></div>
+ <div class=acts><button class=ghost onclick=print()>Print receipt</button><button onclick=closeModal()>New sale</button></div>`)}
+
+/* ---------- Admin ---------- */
+const NAV=[['over','Overview'],['stock','Stock'],['sales','Sales'],['mpesa','M-Pesa'],['log','Stock log'],['export','Export']];
+function adm(){
+ document.body.className='adm';
+ app.innerHTML=`<div class=shell><nav class=side><b class=logo>Smart<span>POS</span></b>${NAV.map(([k,l])=>`<button data-t=${k} class="${k==tab?'on':''}">${l}</button>`).join('')}<button class="out ghost" onclick=logout()>Sign out</button></nav><section id=main class=main></section></div>`;
+ $('.side').onclick=e=>{const b=e.target.closest('[data-t]');if(b){tab=b.dataset.t;document.querySelectorAll('.side [data-t]').forEach(x=>x.classList.toggle('on',x==b));view()}};view()}
+async function dl(n){const f=$('#xf').value,t=$('#xt').value,q=new URLSearchParams();if(f)q.set('from',f);if(t)q.set('to',t);
+ try{const r=await fetch('/api/export/'+n+(q.toString()?'?'+q:''),{headers:{Authorization:'Bearer '+T}});
+ if(!r.ok){let e='Export failed';try{e=(await r.json()).error||e}catch(x){}throw new Error(e)}
+ const bl=await r.blob(),cd=r.headers.get('Content-Disposition')||'',nm=(cd.match(/filename="([^"]+)"/)||[])[1]||n+'.csv',a=document.createElement('a');
+ a.href=URL.createObjectURL(bl);a.download=nm;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Downloaded '+nm)}catch(e){toast(e.message,1)}}
+async function view(){
+ const m=$('#main');
+ try{
+ if(tab=='over'){const d=await api('dashboard'),mx=Math.max(...d.week.map(w=>w.total),1),tm=Math.max(...d.top.map(t=>t[2]),1);
+  m.innerHTML=`<h2>Business overview</h2><div class=kpis>${[['Revenue today',money(d.revenue),'#2EE6A6'],['Profit today',money(d.profit),'#7C5CFF'],['Sales today',d.sales,'#FFB020'],['Low stock items',d.low.length,d.low.length?'#FF4D6D':'#2EE6A6']].map(k=>`<div class=kpi style="--k:${k[2]}"><span class=mut>${k[0]}</span><b>${k[1]}</b></div>`).join('')}</div>
+  <div class=two><div class=pnl><h3>Last 7 days</h3><div class=wk>${d.week.map(w=>`<div title="${money(w.total)}"><i style="height:${w.total/mx*100}%"></i><small class=mut>${w.day.slice(5)}</small></div>`).join('')}</div></div>
+  <div class=pnl><h3>Top products</h3>${d.top.map(t=>`<div class=hb><span>${esc(t[0])} <span class=mut>· ${t[1]} sold</span></span><i style="width:${t[2]/tm*100}%"></i></div>`).join('')||'<p class=empty>No sales yet.</p>'}</div>
+  <div class=pnl><h3>Cashiers today</h3>${d.cashiers.map(c=>`<div class=row><b>${esc(c[0])}</b><span class=mut>${c[1]} sales</span><b style="margin-left:auto">${money(c[2])}</b></div>`).join('')||'<p class=empty>No sales yet today.</p>'}</div>
+  <div class=pnl><h3>Needs restocking</h3>${d.low.map(l=>`<div class=row><span class=pill style="--c:#FF4D6D">${l.stock} left</span><span>${esc(l.name)}</span></div>`).join('')||'<p class=empty>Everything is stocked.</p>'}</div></div>`}
+ if(tab=='stock'){P=await api('products');stockView()}
+ if(tab=='sales'){const s=await api('sales');m.innerHTML=`<h2>Sales</h2>`+tbl(['Receipt','Time','Cashier','Payment','Items','Total'],s.map(x=>[esc(x.receipt_no),esc(x.created_at.replace('T',' ')),esc(x.cashier_name),x.method=='mpesa'?'M-Pesa':'Cash',esc(x.items.map(i=>i.qty+'× '+i.product_name).join(', ')).slice(0,60),`<b>${money(x.total)}</b>`]),'No sales recorded yet.')}
+ if(tab=='mpesa'){const s=await api('mpesa');m.innerHTML=`<h2>M-Pesa payments</h2>`+tbl(['Time','Phone','Amount','Status','Receipt','Note'],s.map(x=>[esc(x.created_at.replace('T',' ')),esc(x.phone),money(x.amount),`<span class=pill style="--c:${x.status=='paid'?'#2EE6A6':x.status=='pending'?'#FFB020':'#FF4D6D'}">${esc(x.status)}</span>`,esc(x.receipt),esc(x.result_desc)]),'No M-Pesa payments yet.')}
+ if(tab=='export'){const b=(n,l,d)=>`<div class=xrow><div><b>${l}</b><p class=empty style="padding:0;text-align:left">${d}</p></div><button onclick="dl('${n}')">Download</button></div>`;
+ m.innerHTML=`<h2>Export data</h2><p class=empty style="text-align:left;padding:0 0 1rem">Files open in Excel. Pick dates to limit the records (leave blank for everything). Products are always exported in full.</p>
+ <div class=xrow><div><b>Date range</b></div><div style="display:flex;gap:.5rem;align-items:center">From <input type=date id=xf> To <input type=date id=xt></div></div>`
+ +b('sales','Sales','One row per sale: receipt, cashier, payment method, total.')+b('sale_items','Sale items','One row per product sold, with cost and profit.')
+ +b('products','Products and stock','Current prices, costs and stock levels.')+b('movements','Stock log','Every stock change, with reason and who made it.')
+ +b('mpesa','M-Pesa payments','Every payment attempt and its result.')+b('audit','Audit log','Sign-ins, sales, edits and exports.')
+ +b('all','Everything (ZIP)','All of the above as one ZIP file.')}
+ if(tab=='log'){const s=await api('movements');m.innerHTML=`<h2>Stock log</h2>`+tbl(['Time','Product','Type','Change','Stock after','Reason','By'],s.map(x=>[esc(x.created_at.replace('T',' ')),esc(x.product_name),`<span class=pill style="--c:${col(x.type)}">${esc(x.type)}</span>`,`<b style="color:${+x.qty_change<0?'#FF6B81':'#2EE6A6'}">${x.qty_change>0?'+':''}${esc(x.qty_change)}</b>`,esc(x.stock_after),esc(x.reason),esc(x.user_name)]),'No stock movements yet.')}
+ }catch(x){toast(x.message,1)}}
+const tbl=(h,r,e)=>r.length?`<div class=tw><table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${r.map(x=>`<tr>${x.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</table></div>`:`<p class=empty>${e}</p>`;
+function stockView(){
+ const t=($('#sq')?.value||'').toLowerCase(),rows=P.filter(p=>p.name.toLowerCase().includes(t)||p.category.toLowerCase().includes(t));
+ $('#main').innerHTML=`<h2>Stock</h2><div class=row><input id=sq placeholder="Search stock" value="${esc(t)}"><button onclick="prodForm()" style="margin-left:auto">Add product</button></div>`+
+ tbl(['Product','Category','Price','Cost','In stock','',''],rows.map(p=>[`<b>${esc(p.name)}</b>`,`<span class=pill style="--c:${col(p.category)}">${esc(p.category)}</span>`,money(p.price),money(p.cost),`<span class=pill style="--c:${+p.stock<=+p.reorder_level?'#FF4D6D':'#2EE6A6'}">${p.stock}</span>`,`<button class=ghost onclick="prodForm('${p.id}')">Edit</button>`,`<button class="ghost" style="color:#FF6B81" onclick="del('${p.id}')">Delete</button>`]),'No products yet. Add your first one.');
+ const q=$('#sq');q.oninput=()=>{const pos=q.selectionStart;stockView();const n=$('#sq');n.focus();n.setSelectionRange(pos,pos)}}
+function prodForm(id){
+ const p={stock:0,reorder_level:10,...(P.find(x=>x.id==id)||{})};
+ const F=[['name','Name'],['category','Category'],['barcode','Barcode (optional)'],['price','Selling price'],['cost','Cost price'],['stock','Stock on hand'],['reorder_level','Reorder at']];
+ modal(`<h3>${id?'Edit product':'Add product'}</h3><div class=form>${F.map(([k,l])=>`<label>${l}<input name=${k} value="${esc(p[k])}" ${k=='category'?'list=cats':''}></label>`).join('')}</div><datalist id=cats>${[...new Set(P.map(x=>x.category))].map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+ <div class=acts><button class=ghost onclick=closeModal()>Cancel</button><button id=sv>Save product</button></div>`);
+ $('#sv').onclick=async()=>{const d={};document.querySelectorAll('.form input').forEach(i=>d[i.name]=i.value);
+  try{await api(id?'products/'+id:'products',id?'PUT':'POST',d);closeModal();toast(id?'Product updated':'Product added');P=await api('products');stockView()}catch(x){toast(x.message,1)}}}
+async function del(id){const p=P.find(x=>x.id==id);if(!confirm(`Delete ${p.name}? Its sales history stays in the records.`))return;
+ try{await api('products/'+id,'DELETE');toast('Product deleted');P=await api('products');stockView()}catch(x){toast(x.message,1)}}
+
+(async()=>{if(!T)return loginView();try{ME=await api('me');route()}catch{loginView()}})();
+</script></body></html>

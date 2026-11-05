@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+
+*.db
+*.deb
+
+data/
+data_backup_*/
+smartpos_sales_*.csv
+
