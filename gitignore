@@ -1,4 +1,18 @@
+# secrets and local data: never commit these
 .env
+.env.*
+!.env.example
+
+smartpos.db
+smartpos.db-wal
+smartpos.db-shm
+*.db
 data/
+data_backup_*/
+backups/
+exports/
+
 __pycache__/
+*.py[cod]
 *.tmp
+*.deb

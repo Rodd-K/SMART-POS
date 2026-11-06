@@ -43,10 +43,7 @@ input,select{width:100%;padding:.6rem .8rem;border-radius:10px;border:1.5px soli
 .adm .shell{display:grid;grid-template-columns:210px 1fr;min-height:100vh}
 .side{background:#0A0B18;padding:1.2rem;display:flex;flex-direction:column;gap:.4rem;border-right:1.5px solid var(--line)}.side .logo{margin-bottom:1rem}
 .side button{background:transparent;text-align:left;color:var(--mut)}.side button.on{background:var(--acc);color:#fff}.side .out{margin-top:auto}
-<<<<<<< HEAD
 .xrow{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.9rem 1rem;margin-bottom:.6rem;border:1.5px solid var(--line);border-radius:12px}.xrow p{margin:.2rem 0 0}
-=======
->>>>>>> 0a6b6295338419c1964a11616daa574f9a41368c
 .main{padding:1.6rem;display:grid;gap:1.2rem;align-content:start;min-width:0}.main h2{font-size:1.5rem}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem}
 .kpi{background:var(--panel);border-radius:16px;padding:1rem 1.2rem;border-left:5px solid var(--k)}.kpi b{display:block;font-size:1.6rem;color:var(--k)}
@@ -96,13 +93,8 @@ async function pos(){
  app.innerHTML=`<header class=top><b class=logo>Smart<span>POS</span></b><span class=mut>${esc(ME.name)}</span><button class=ghost onclick=logout()>Sign out</button></header>
  <main class=posgrid><section><div class=bar><input id=q placeholder="Search products or scan a barcode" autofocus><div id=chips class=chips></div></div><div id=grid class=grid></div></section>
  <aside class=cart><h3>Current sale</h3><div id=lines class=lines></div><div class=total><span>Total</span><span id=tot></span></div>
-<<<<<<< HEAD
  <div class=seg><button data-m=cash class=on>Cash</button><button data-m=mpesa>M-Pesa${ME.mode=='simulated'?' (simulated)':''}</button></div>
  <div id=phonebox style="display:none"><input id=phone inputmode=tel placeholder="Customer phone, e.g. 0712345678"></div><div id=cashbox><input id=tend inputmode=decimal placeholder="Cash received"><div class=quick id=quick></div><p id=chg class=mut></p></div>
-=======
- <div class=seg><button data-m=cash class=on>Cash</button><button data-m=mpesa>M-Pesa (simulated)</button></div>
- <div id=cashbox><input id=tend inputmode=decimal placeholder="Cash received"><div class=quick id=quick></div><p id=chg class=mut></p></div>
->>>>>>> 0a6b6295338419c1964a11616daa574f9a41368c
  <button id=pay disabled>Charge</button></aside></main>`;
  P=await api('products');chips();grid();lines();
  $('#q').oninput=grid;
@@ -111,11 +103,7 @@ async function pos(){
  $('#chips').onclick=e=>{const c=e.target.closest('.chip');if(c){cat=c.dataset.c;chips();grid()}};
  $('#lines').onclick=e=>{const b=e.target.closest('[data-d]');if(b){chg(b.dataset.id,+b.dataset.d)}};
  $('.seg').onclick=e=>{const b=e.target.closest('button');if(!b)return;method=b.dataset.m;document.querySelectorAll('.seg button').forEach(x=>x.classList.toggle('on',x==b));upd()};
-<<<<<<< HEAD
  $('#tend').oninput=upd;$('#phone').oninput=upd;$('#pay').onclick=charge;
-=======
- $('#tend').oninput=upd;$('#pay').onclick=charge;
->>>>>>> 0a6b6295338419c1964a11616daa574f9a41368c
  $('#quick').onclick=e=>{if(e.target.dataset.v){$('#tend').value=e.target.dataset.v;upd()}}}
 function chips(){const cs=['All',...new Set(P.map(p=>p.category))];$('#chips').innerHTML=cs.map(c=>`<button class="chip ${c==cat?'on':''}" style="--c:${c=='All'?'#1B1F3B':col(c)}" data-c="${esc(c)}">${esc(c)}</button>`).join('')}
 function grid(){const t=$('#q').value.trim().toLowerCase();
@@ -129,23 +117,15 @@ function lines(){
  const t=sum();$('#quick').innerHTML=t?[`<button class=ghost data-v="${t}">Exact</button>`,...[100,200,500,1000,2000].filter(v=>v>=t).slice(0,3).map(v=>`<button class=ghost data-v="${v}">${v}</button>`)].join(''):'';upd()}
 function upd(){
  const t=sum(),m=method=='mpesa',v=+$('#tend').value||0;
-<<<<<<< HEAD
  $('#tot').textContent=money(t);$('#cashbox').style.display=m?'none':'';$('#phonebox').style.display=m&&ME.mode!='simulated'?'':'none';
  $('#chg').textContent=!t?'':v>=t?`Change: ${money(v-t)}`:v?`Short by ${money(t-v)}`:'';
  const live=m&&ME.mode!='simulated';$('#pay').disabled=!t||(!m&&v<t)||(live&&$('#phone').value.replace(/\D/g,'').length<9);$('#pay').textContent=m?(live?'Send M-Pesa prompt':'Charge M-Pesa (simulated)'):'Charge cash'}
 async function charge(){
  if(method=='mpesa'&&ME.mode!='simulated')return mpesaPay();
-=======
- $('#tot').textContent=money(t);$('#cashbox').style.display=m?'none':'';
- $('#chg').textContent=!t?'':v>=t?`Change: ${money(v-t)}`:v?`Short by ${money(t-v)}`:'';
- $('#pay').disabled=!t||(!m&&v<t);$('#pay').textContent=m?'Charge M-Pesa (simulated)':'Charge cash'}
-async function charge(){
->>>>>>> 0a6b6295338419c1964a11616daa574f9a41368c
  const b=$('#pay');b.disabled=true;
  try{const r=await api('sales','POST',{client_ref:ref,method,tendered:$('#tend').value,items:Object.entries(cart).map(([product_id,qty])=>({product_id,qty}))});
   ref=crypto.randomUUID();cart={};$('#tend').value='';P=await api('products');grid();lines();receipt(r)}
  catch(x){toast(x.message,1);upd()}}
-<<<<<<< HEAD
 async function mpesaPay(){
  $('#pay').disabled=true;let stop=0;const myref=ref,phone=$('#phone').value;
  try{await api('mpesa/start','POST',{client_ref:myref,phone,items:Object.entries(cart).map(([product_id,qty])=>({product_id,qty}))})}
@@ -164,27 +144,15 @@ function receipt(s){modal(`<div id=rc class=rc><b style="font-size:1.1rem;text-a
 
 /* ---------- Admin ---------- */
 const NAV=[['over','Overview'],['stock','Stock'],['sales','Sales'],['mpesa','M-Pesa'],['log','Stock log'],['export','Export']];
-=======
-function receipt(s){modal(`<div id=rc class=rc><b style="font-size:1.1rem;text-align:center">SmartPOS</b><div><span>${esc(s.receipt_no)}</span><span>${esc(s.created_at.replace('T',' '))}</span></div><div><span>Cashier</span><span>${esc(s.cashier_name)}</span></div><hr>
- ${s.items.map(i=>`<div><span>${i.qty} × ${esc(i.product_name)}</span><span>${money(i.line_total)}</span></div>`).join('')}<hr>
- <div><b>Total</b><b>${money(s.total)}</b></div><div><span>${s.method=='mpesa'?'M-Pesa (simulated) '+esc(s.payment_ref):'Cash received'}</span><span>${money(s.tendered)}</span></div><div><span>Change</span><span>${money(s.change)}</span></div><p style="text-align:center">Thank you!</p></div>
- <div class=acts><button class=ghost onclick=print()>Print receipt</button><button onclick=closeModal()>New sale</button></div>`)}
-
-/* ---------- Admin ---------- */
-const NAV=[['over','Overview'],['stock','Stock'],['sales','Sales'],['log','Stock log']];
->>>>>>> 0a6b6295338419c1964a11616daa574f9a41368c
 function adm(){
  document.body.className='adm';
  app.innerHTML=`<div class=shell><nav class=side><b class=logo>Smart<span>POS</span></b>${NAV.map(([k,l])=>`<button data-t=${k} class="${k==tab?'on':''}">${l}</button>`).join('')}<button class="out ghost" onclick=logout()>Sign out</button></nav><section id=main class=main></section></div>`;
  $('.side').onclick=e=>{const b=e.target.closest('[data-t]');if(b){tab=b.dataset.t;document.querySelectorAll('.side [data-t]').forEach(x=>x.classList.toggle('on',x==b));view()}};view()}
-<<<<<<< HEAD
 async function dl(n){const f=$('#xf').value,t=$('#xt').value,q=new URLSearchParams();if(f)q.set('from',f);if(t)q.set('to',t);
  try{const r=await fetch('/api/export/'+n+(q.toString()?'?'+q:''),{headers:{Authorization:'Bearer '+T}});
  if(!r.ok){let e='Export failed';try{e=(await r.json()).error||e}catch(x){}throw new Error(e)}
  const bl=await r.blob(),cd=r.headers.get('Content-Disposition')||'',nm=(cd.match(/filename="([^"]+)"/)||[])[1]||n+'.csv',a=document.createElement('a');
  a.href=URL.createObjectURL(bl);a.download=nm;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Downloaded '+nm)}catch(e){toast(e.message,1)}}
-=======
->>>>>>> 0a6b6295338419c1964a11616daa574f9a41368c
 async function view(){
  const m=$('#main');
  try{
@@ -195,7 +163,6 @@ async function view(){
   <div class=pnl><h3>Cashiers today</h3>${d.cashiers.map(c=>`<div class=row><b>${esc(c[0])}</b><span class=mut>${c[1]} sales</span><b style="margin-left:auto">${money(c[2])}</b></div>`).join('')||'<p class=empty>No sales yet today.</p>'}</div>
   <div class=pnl><h3>Needs restocking</h3>${d.low.map(l=>`<div class=row><span class=pill style="--c:#FF4D6D">${l.stock} left</span><span>${esc(l.name)}</span></div>`).join('')||'<p class=empty>Everything is stocked.</p>'}</div></div>`}
  if(tab=='stock'){P=await api('products');stockView()}
-<<<<<<< HEAD
  if(tab=='sales'){const s=await api('sales');m.innerHTML=`<h2>Sales</h2>`+tbl(['Receipt','Time','Cashier','Payment','Items','Total'],s.map(x=>[esc(x.receipt_no),esc(x.created_at.replace('T',' ')),esc(x.cashier_name),x.method=='mpesa'?'M-Pesa':'Cash',esc(x.items.map(i=>i.qty+'× '+i.product_name).join(', ')).slice(0,60),`<b>${money(x.total)}</b>`]),'No sales recorded yet.')}
  if(tab=='mpesa'){const s=await api('mpesa');m.innerHTML=`<h2>M-Pesa payments</h2>`+tbl(['Time','Phone','Amount','Status','Receipt','Note'],s.map(x=>[esc(x.created_at.replace('T',' ')),esc(x.phone),money(x.amount),`<span class=pill style="--c:${x.status=='paid'?'#2EE6A6':x.status=='pending'?'#FFB020':'#FF4D6D'}">${esc(x.status)}</span>`,esc(x.receipt),esc(x.result_desc)]),'No M-Pesa payments yet.')}
  if(tab=='export'){const b=(n,l,d)=>`<div class=xrow><div><b>${l}</b><p class=empty style="padding:0;text-align:left">${d}</p></div><button onclick="dl('${n}')">Download</button></div>`;
@@ -205,9 +172,6 @@ async function view(){
  +b('products','Products and stock','Current prices, costs and stock levels.')+b('movements','Stock log','Every stock change, with reason and who made it.')
  +b('mpesa','M-Pesa payments','Every payment attempt and its result.')+b('audit','Audit log','Sign-ins, sales, edits and exports.')
  +b('all','Everything (ZIP)','All of the above as one ZIP file.')}
-=======
- if(tab=='sales'){const s=await api('sales');m.innerHTML=`<h2>Sales</h2>`+tbl(['Receipt','Time','Cashier','Payment','Items','Total'],s.map(x=>[esc(x.receipt_no),esc(x.created_at.replace('T',' ')),esc(x.cashier_name),x.method=='mpesa'?'M-Pesa (sim)':'Cash',esc(x.items.map(i=>i.qty+'× '+i.product_name).join(', ')).slice(0,60),`<b>${money(x.total)}</b>`]),'No sales recorded yet.')}
->>>>>>> 0a6b6295338419c1964a11616daa574f9a41368c
  if(tab=='log'){const s=await api('movements');m.innerHTML=`<h2>Stock log</h2>`+tbl(['Time','Product','Type','Change','Stock after','Reason','By'],s.map(x=>[esc(x.created_at.replace('T',' ')),esc(x.product_name),`<span class=pill style="--c:${col(x.type)}">${esc(x.type)}</span>`,`<b style="color:${+x.qty_change<0?'#FF6B81':'#2EE6A6'}">${x.qty_change>0?'+':''}${esc(x.qty_change)}</b>`,esc(x.stock_after),esc(x.reason),esc(x.user_name)]),'No stock movements yet.')}
  }catch(x){toast(x.message,1)}}
 const tbl=(h,r,e)=>r.length?`<div class=tw><table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${r.map(x=>`<tr>${x.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</table></div>`:`<p class=empty>${e}</p>`;

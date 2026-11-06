@@ -1,8 +1,0 @@
-.env
-data/
-__pycache__/
-*.tmp
-smartpos.db
-smartpos.db-wal
-smartpos.db-shm
-data_backup_*/
