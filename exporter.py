@@ -1,9 +1,14 @@
 """SmartPOS data export. Builds Excel-friendly CSV files (or one ZIP of all of them) from smartpos.db.
 Read-only: it never changes the database. Passwords and user accounts are never exported.
 Python standard library only."""
+# =====================================================================================================
+# Builds the Excel-friendly files on the admin Export page. It only READS the database.
+# Passwords and staff accounts are never exported. Each file starts with a marker (utf-8-sig) so Excel reads accents correctly.
+# =====================================================================================================
 import csv, io, re, zipfile
 from datetime import datetime
 
+# Money columns are formatted inside the SQL query (cents to "65.50") so there are no rounding errors.
 KES = "printf('%d.%02d', {0}/100, {0}%100)"  # cents -> "65.50" (done in SQL so no rounding errors)
 
 
@@ -11,7 +16,17 @@ def _m(col):
     return KES.format(col)
 
 
+# Turns a score into Low / Medium / High / Critical with the same boundaries as the fraud engine.
+def _level(expr):  # same bands as the fraud engine: Low < 30, Medium < 60, High < 80, Critical
+    return f"CASE WHEN {expr}<30 THEN 'Low' WHEN {expr}<60 THEN 'Medium' WHEN {expr}<80 THEN 'High' ELSE 'Critical' END"
+
+
+_RISK = "MIN(100, SUM(CASE WHEN status<>'legitimate' THEN score ELSE 0 END))"  # findings a manager cleared do not count
+
+
 # name -> (columns shown in the file, SQL, date column used for the From/To filter or None)
+# THE LIST OF EXPORTS. Each entry is:  name: (column headings, the SQL that fetches the rows, the date column the From/To dates filter on).
+# {w} in the SQL is replaced by the date filter. TO ADD A NEW EXPORT: add an entry here and a button for it in index.html (the 'export' tab).
 DATASETS = {
     "sales": (
         ["Receipt", "Date/Time", "Cashier", "Payment", "Payment ref", "Total (KES)", "Received (KES)", "Change (KES)"],
@@ -40,11 +55,24 @@ DATASETS = {
         ["Date/Time", "User", "Action", "Details"],
         "SELECT created_at, user_name, action, details FROM audit_log {w} ORDER BY created_at, rowid",
         "created_at"),
+    "fraud": (  # the date range applies to when the suspicious activity happened
+        ["Date/Time of activity", "Found on", "Person", "Rule", "Finding", "Score", "Risk level", "Reason", "Status", "Decided by", "Decided on", "Manager note"],
+        "SELECT event_time, created_at, subject, rule, title, score, " + _level("score") + ", reason, status, reviewed_by, reviewed_at, note "
+        "FROM fraud_events {w} ORDER BY event_time, rowid",
+        "event_time"),
+    "fraud_summary": (
+        ["Person", "Findings", "Risk score (max 100, cleared findings excluded)", "Risk level", "Still to review", "Legitimate", "Policy violation",
+         "Suspected fraud", "Inconclusive"],
+        "SELECT subject, COUNT(*), " + _RISK + ", " + _level(_RISK) + ", SUM(status IN ('new','investigating')), SUM(status='legitimate'), "
+        "SUM(status='policy_violation'), SUM(status='suspected_fraud'), SUM(status='inconclusive') FROM fraud_events {w} GROUP BY subject ORDER BY 3 DESC, subject",
+        "event_time"),
 }
 
+# Dates must look like 2026-11-30.
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+# Accepts a blank or a real YYYY-MM-DD date; anything else (like 2026-13-45) is refused.
 def _clean_date(v):
     v = (v or "").strip()
     if not v:
@@ -55,6 +83,7 @@ def _clean_date(v):
     return v
 
 
+# Protects Excel users: text starting with = + - @ could run as a formula, so it gets a leading apostrophe.
 def _safe(v):
     """Stop Excel running text as a formula (a cell starting with = + - @ can be an attack). Numbers are left alone."""
     if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
@@ -62,6 +91,7 @@ def _safe(v):
     return v
 
 
+# Runs one export's SQL with the From/To dates applied.
 def _rows(c, name, frm, to):
     cols, sql, dcol = DATASETS[name]
     where, args = "", []
@@ -77,6 +107,7 @@ def _rows(c, name, frm, to):
     return cols, c.execute(sql.replace("{w}", where), args).fetchall()
 
 
+# Builds the CSV file's bytes.
 def _csv_bytes(cols, rows):
     out = io.StringIO()
     w = csv.writer(out)
@@ -86,10 +117,12 @@ def _csv_bytes(cols, rows):
     return out.getvalue().encode("utf-8-sig")  # the BOM makes Excel read the file as UTF-8
 
 
+# Adds the chosen dates to the file name.
 def _span(frm, to):
     return ("_" + (frm or "start") + "_to_" + (to or "now")) if (frm or to) else ""
 
 
+# The function server.py calls. Returns (file name, file bytes, type, number of rows), or None for a bad name or dates.
 def run(c, name, query):
     """name: a dataset name or 'all'. query: dict like {'from': ['2026-11-01'], 'to': [...]}.
     Returns (filename, bytes, content_type, rows_exported), or None for an unknown name / bad date."""

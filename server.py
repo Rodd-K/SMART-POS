@@ -1,5 +1,23 @@
 """SmartPOS - local server on SQLite. Python standard library only. Run: python3 server.py -> http://localhost:8000"""
-import os, sys, json, uuid, hashlib, secrets
+# =====================================================================================================
+# HOW THIS FILE IS ORGANISED (read this first)
+#
+#   1. Helpers ............ new_conn, tx, hp, audit, move, init
+#   2. Sign-in ............ login
+#   3. Products and sales . prod, clean, receipt, _sell, sell
+#   4. M-Pesa payments .... mpesa_start, settle, mpesa_callback, mpesa_status
+#   5. Admin features ..... dashboard, fraud_api, print_receipt, hardware_api
+#   6. api() .............. the ROUTER: decides which function answers each web address, and who may use it
+#   7. class H ............ the web server itself: receives a request, calls api(), sends the answer back
+#   8. scan_loop + the last lines ... start everything
+#
+# THE JOURNEY OF A REQUEST
+#   browser page  ->  H.handle_any  ->  api()  ->  one of the functions above  ->  database  ->  answer (JSON) back to the page
+#
+# TO ADD A NEW FEATURE
+#   write a function (sections 3-5), add one route line in api() (section 6), call it from index.html, add a test in tests/.
+# =====================================================================================================
+import os, sys, json, uuid, hashlib, secrets, threading, time
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -10,21 +28,35 @@ from urllib.parse import urlparse, parse_qs
 import db
 import mpesa
 import exporter
+from fraud import engine as fraud_engine
+from hardware import escpos, printer
 
+# ROOT = the folder this file lives in (used to find index.html).
+# TOKENS = who is signed in. It maps a random sign-in token to that user's record. It lives in memory only,
+# so everybody is signed out whenever the server restarts.
 ROOT = os.path.dirname(os.path.abspath(__file__))
 TOKENS = {}
+# Tiny helpers used everywhere:
+#   uid()   makes a unique id           now()    the current time as text
+#   cents() turns "65.50" into 6550      money()  turns 6550 back into "65.50"
+# IMPORTANT: money is always kept as WHOLE CENTS inside the program, so totals never have rounding errors.
 uid = lambda: str(uuid.uuid4())
 now = lambda: datetime.now().isoformat(timespec="seconds")
 cents = lambda v: int((Decimal(str(v)) * 100).to_integral_value())  # "65.50" -> 6550
 money = lambda c: "%d.%02d" % divmod(c, 100)                         # 6550 -> "65.50"
 
 
+# Opens a database connection for ONE request. isolation_level=None means "we decide when a transaction starts"
+# (see tx below). Every request gets its own connection and closes it when finished.
 def new_conn():
     c = db.connect()
     c.isolation_level = None  # we control transactions ourselves
     return c
 
 
+# tx() = a transaction: a group of database changes that ALL succeed or ALL are undone.
+# Use it like:   with tx(c):  ...several changes...
+# BEGIN IMMEDIATE lets only one writer in at a time, which is what stops two cashiers selling the last unit together.
 @contextmanager
 def tx(c):
     """All-or-nothing block. BEGIN IMMEDIATE lets only one writer in at a time, so stock checks cannot race."""
@@ -37,23 +69,31 @@ def tx(c):
         raise
 
 
+# Turns a password into a scrambled "hash" (PBKDF2, 200,000 rounds, plus a random salt per user).
+# Passwords are never stored or compared in plain text.
 def hp(pw, salt):
     return hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 200_000).hex()
 
 
+# Writes one line to the audit log: who did what, and when. Call this for anything sensitive so there is always a trail.
 def audit(c, u, action, details=""):
     c.execute("INSERT INTO audit_log VALUES(?,?,?,?,?)", (uid(), now(), u["name"], action, details))
 
 
+# Records a stock movement (a sale, opening stock, a manual adjustment). Stock is never just overwritten:
+# every change leaves a row here, which is also what the fraud engine reads.
 def move(c, u, pid, pname, kind, change, after, reason):
     c.execute("INSERT INTO stock_movements VALUES(?,?,?,?,?,?,?,?,?)", (uid(), now(), pid, pname, kind, change, after, reason, u["name"]))
 
 
+# Runs once when the server starts. It makes sure the database exists and is up to date, and on a brand-new install
+# it creates the two DEMO accounts and some sample products.
+# >>> CHANGE THE DEMO PASSWORDS before any real shop uses this. <<<
 def init():
     if not os.path.exists(db.DB_PATH) and os.path.exists(os.path.join(ROOT, "data", "users.csv")):
         sys.exit("Your data is still in the CSV files. Run  python3 migrate_csv.py  first, then start the server again.")
+    db.init().close()  # creates the tables, or upgrades an older database
     c = new_conn()
-    db.init()
     if not c.execute("SELECT 1 FROM users").fetchone():
         with tx(c):
             for un, nm, role, pw in [("admin", "Administrator", "admin", "admin123"), ("cashier", "Cashier One", "cashier", "cashier123")]:
@@ -69,16 +109,21 @@ def init():
     c.close()
 
 
+# Checks the username and password. On success it returns a random token that the page keeps and sends with every later
+# request. Failed attempts are written to the audit log (the fraud engine watches for password guessing).
+# TO CHANGE: a lockout after repeated failures would be added here.
 def login(c, b):
     r = c.execute("SELECT * FROM users WHERE username=? AND active=1", (str(b.get("username", "")).strip().lower(),)).fetchone()
     if r and secrets.compare_digest(hp(str(b.get("password", "")), r["salt"]), r["hash"]):
         t = secrets.token_urlsafe(24)
         TOKENS[t] = dict(r)
         audit(c, r, "login")
-        return 200, {"token": t, "user": {"name": r["name"], "role": r["role"], "mode": mpesa.mode()}}
+        return 200, {"token": t, "user": {"name": r["name"], "role": r["role"], "mode": mpesa.mode(), "printer": printer.configured(), "autoprint": printer.settings()["autoprint"]}}
+    audit(c, {"name": str(b.get("username", ""))[:40] or "?"}, "login failed")  # the fraud engine watches for guessing
     return 401, {"error": "Wrong username or password"}
 
 
+# Shapes one product row for the page: cents become "65.00" text. Cashiers do not get the cost price (admin=False hides it).
 def prod(r, admin=True):
     d = dict(id=r["id"], name=r["name"], category=r["category"], price=money(r["price_cents"]), stock=r["stock"],
              reorder_level=r["reorder_level"], barcode=r["barcode"], updated_at=r["updated_at"])
@@ -87,6 +132,8 @@ def prod(r, admin=True):
     return d
 
 
+# Checks the product details typed into the admin form. Returns None if anything is wrong (empty name, negative price...).
+# TO ADD A NEW PRODUCT FIELD: add it here, in prod() above, in the products table (db.py, as a migration), and in prodForm() in index.html.
 def clean(b):
     try:
         d = dict(name=str(b["name"]).strip(), category=str(b.get("category") or "General").strip(), price_cents=cents(b["price"]),
@@ -97,6 +144,7 @@ def clean(b):
     return d if d["name"] and min(d["price_cents"], d["cost_cents"], d["stock"], d["reorder_level"]) >= 0 else None
 
 
+# Builds the complete receipt (the sale plus its lines) in the shape the page AND the printer both use.
 def receipt(c, s):
     items = c.execute("SELECT * FROM sale_items WHERE sale_id=? ORDER BY rowid", (s["id"],)).fetchall()
     return {**{k: s[k] for k in ("id", "receipt_no", "client_ref", "created_at", "cashier_id", "cashier_name", "method", "payment_ref")},
@@ -105,6 +153,14 @@ def receipt(c, s):
                            line_total=money(i["line_total_cents"])) for i in items]}
 
 
+# THE HEART OF THE POS: saves one sale. In order:
+#   1. If this client_ref was already used, return that sale (so a double-click can never charge twice).
+#   2. Check every item exists and there is enough stock.
+#   3. Work out the total from the DATABASE prices, never from the browser.
+#   4. Check the cash covers the total.
+#   5. Write the sale, its lines, the reduced stock and the stock movements.
+# dry=True only checks and returns the total without saving (used before sending an M-Pesa prompt).
+# It must run inside a transaction: use sell() below, which does that for you.
 def _sell(c, u, b, paid_ref=None, dry=False):
     """Runs inside a transaction opened by the caller (unless dry, which only reads)."""
     ref = str(b.get("client_ref") or uid())
@@ -149,6 +205,7 @@ def _sell(c, u, b, paid_ref=None, dry=False):
     return 201, receipt(c, c.execute("SELECT * FROM sales WHERE id=?", (sid,)).fetchone())
 
 
+# Wraps _sell in a transaction so a sale is saved completely or not at all. Call THIS, not _sell, from other code.
 def sell(c, u, b, paid_ref=None, dry=False):
     if dry:
         return _sell(c, u, b, paid_ref, True)
@@ -156,6 +213,8 @@ def sell(c, u, b, paid_ref=None, dry=False):
         return _sell(c, u, b, paid_ref)
 
 
+# M-PESA STEP 1: check the cart, ask Safaricom to send the customer a payment prompt, and remember the attempt as "pending".
+# At this point there is NO sale and NO stock change yet.
 def mpesa_start(c, u, b):
     miss = mpesa.missing()
     if mpesa.mode() == "simulated" or miss:
@@ -183,6 +242,8 @@ def mpesa_start(c, u, b):
     return 201, {"status": "pending"}
 
 
+# M-PESA STEP 3: the money has arrived. In ONE transaction: record the sale, reduce stock, mark the payment paid.
+# Safe to call twice: if the payment is already settled it does nothing.
 def settle(c, pay_id, receipt_no):
     """Money has arrived: record the sale and mark the payment paid, as ONE transaction, exactly once."""
     with tx(c):
@@ -197,6 +258,8 @@ def settle(c, pay_id, receipt_no):
         audit(c, u, "mpesa paid", f"{receipt_no} {money(pay['amount_cents'])}")
 
 
+# M-PESA STEP 2: Safaricom calls this (through the secret web address) to say the payment worked or failed.
+# We only believe a success if the amount matches the sale. Duplicate callbacks are ignored.
 def mpesa_callback(c, b):
     cb = b["Body"]["stkCallback"]
     pay = c.execute("SELECT * FROM mpesa_payments WHERE checkout_request_id=?", (cb["CheckoutRequestID"],)).fetchone()
@@ -213,6 +276,8 @@ def mpesa_callback(c, b):
     return 200, {"ResultCode": 0, "ResultDesc": "Accepted"}
 
 
+# The cashier's screen asks this every 3 seconds: "did the customer pay yet?".
+# If no callback has arrived after 15 seconds we ask Safaricom directly; after 2 minutes we give up (timeout).
 def mpesa_status(c, u, ref):
     q = "SELECT * FROM mpesa_payments WHERE client_ref=? AND cashier_id=? ORDER BY rowid DESC LIMIT 1"
     pay = c.execute(q, (ref, u["id"])).fetchone()
@@ -239,6 +304,8 @@ def mpesa_status(c, u, ref):
     return 200, out
 
 
+# The numbers on the admin Overview page: today's revenue, profit and sales, the last 7 days, top products, cashier totals,
+# low stock and new fraud alerts. TO ADD A NUMBER: add it to the dictionary below and show it in index.html (the 'over' tab).
 def dashboard(c):
     day = now()[:10]
     rev, n = c.execute("SELECT COALESCE(SUM(total_cents),0), COUNT(*) FROM sales WHERE substr(created_at,1,10)=?", (day,)).fetchone()
@@ -254,14 +321,116 @@ def dashboard(c):
         "cashiers": [[r[0], r[1], r[2] / 100] for r in c.execute("SELECT cashier_name, COUNT(*), SUM(total_cents) FROM sales "
                                                                  "WHERE substr(created_at,1,10)=? GROUP BY 1", (day,))],
         "low": [dict(name=r[0], stock=r[1], reorder=r[2]) for r in c.execute("SELECT name, stock, reorder_level FROM products WHERE stock<=reorder_level ORDER BY stock")],
+        "fraud_new": c.execute("SELECT COUNT(*) FROM fraud_events WHERE status='new'").fetchone()[0],
     }
 
 
+# The decisions a manager can record on a fraud alert. NEEDS_NOTE lists the ones that must come with a written note.
+FRAUD_STATUSES = ("new", "investigating", "legitimate", "policy_violation", "suspected_fraud", "inconclusive")
+NEEDS_NOTE = ("legitimate", "policy_violation", "suspected_fraud", "inconclusive")
+
+
+# Shapes one fraud finding for the page.
+def fraud_event(r):
+    return dict(id=r["id"], created_at=r["created_at"], event_time=r["event_time"], rule=r["rule"], subject=r["subject"], score=r["score"],
+                level=fraud_engine.band(r["score"]), title=r["title"], reason=r["reason"], evidence=json.loads(r["evidence_json"] or "{}"),
+                status=r["status"], reviewed_by=r["reviewed_by"], reviewed_at=r["reviewed_at"], note=r["note"])
+
+
+# Everything behind the admin Fraud tab: the summary, the list of alerts, "Scan now", and recording a decision.
+# ADMIN ONLY. Nothing here can change a sale, a payment or stock: alerts are advice for a manager.
+def fraud_api(c, m, a, u, b):
+    """Admin only. Alerts are advice for a manager: nothing here can change a sale, payment or stock record."""
+    if a == ["fraud", "summary"] and m == "GET":
+        n = dict(c.execute("SELECT status, COUNT(*) FROM fraud_events GROUP BY status").fetchall())
+        return 200, {"new": n.get("new", 0), "open": n.get("new", 0) + n.get("investigating", 0), "by_status": n, "risk": fraud_engine.risk(c)}
+    if len(a) == 3 and a[1] == "events" and m == "GET":
+        f = a[2]
+        if f == "open":
+            where, args = "WHERE status IN ('new','investigating')", ()
+        elif f == "all":
+            where, args = "", ()
+        elif f in FRAUD_STATUSES:
+            where, args = "WHERE status=?", (f,)
+        else:
+            return 400, {"error": "Unknown filter"}
+        rows = c.execute(f"SELECT * FROM fraud_events {where} ORDER BY event_time DESC, rowid DESC LIMIT 200", args).fetchall()
+        return 200, [fraud_event(r) for r in rows]
+    if a == ["fraud", "scan"] and m == "POST":
+        n = fraud_engine.run(c)
+        audit(c, u, "fraud scan", f"{n} new finding(s)")
+        return 200, {"new": n}
+    if len(a) == 3 and a[2] == "decision" and m == "POST":
+        row = c.execute("SELECT * FROM fraud_events WHERE id=?", (a[1],)).fetchone()
+        if not row:
+            return 404, {"error": "Alert not found"}
+        status, note = str(b.get("status", "")), str(b.get("note", "")).strip()[:300]
+        if status not in FRAUD_STATUSES:
+            return 400, {"error": "Choose a valid decision"}
+        if status in NEEDS_NOTE and len(note) < 3:
+            return 400, {"error": "Add a short note explaining the decision"}
+        c.execute("UPDATE fraud_events SET status=?, note=?, reviewed_by=?, reviewed_at=? WHERE id=?", (status, note, u["name"], now(), a[1]))
+        audit(c, u, "fraud decision", f"{row['title']} / {row['subject']}: {status}")
+        return 200, fraud_event(c.execute("SELECT * FROM fraud_events WHERE id=?", (a[1],)).fetchone())
+    return 404, {"error": "Not found"}
+
+
+# Prints a receipt on the thermal printer. The rules:
+#   - a cashier may print only their OWN sale, within 10 minutes; an admin may print any receipt at any time
+#   - the 2nd and later copies say DUPLICATE COPY and never open the cash drawer
+#   - every successful print is logged in the audit log
+def print_receipt(c, u, receipt_no):
+    s = c.execute("SELECT * FROM sales WHERE receipt_no=?", (receipt_no,)).fetchone()
+    if not s:
+        return 404, {"error": "Receipt not found"}
+    if u["role"] != "admin":  # a cashier may print their own fresh sale; older reprints are for a manager
+        age = (datetime.now() - datetime.fromisoformat(s["created_at"])).total_seconds()
+        if s["cashier_id"] != u["id"] or age > 600:
+            return 403, {"error": "Only an admin can print this receipt"}
+    cfg = printer.settings()
+    copies = c.execute("SELECT COUNT(*) FROM audit_log WHERE action='receipt printed' AND details=?", (receipt_no,)).fetchone()[0]
+    doc = escpos.receipt(receipt(c, s), cfg, copy=copies, kick=cfg["drawer"] and s["method"] == "cash" and copies == 0)
+    try:
+        printer.send(doc.bytes())
+    except printer.PrinterError as e:
+        return 503, {"error": str(e)}
+    audit(c, u, "receipt printed", receipt_no)  # every print is on record; the second one onward says DUPLICATE COPY
+    return 200, {"printed": True, "copy": copies + 1}
+
+
+# Behind the admin Hardware tab: show the printer settings, print a test page, open the cash drawer.
+def hardware_api(c, m, a, u, b):
+    cfg = printer.settings()
+    if a == ["hardware"] and m == "GET":
+        kind, _, target = cfg["spec"].partition(":")
+        return 200, dict(printer=dict(configured=printer.configured(), type=kind.lower() or "none", target=target, width=cfg["width"]),
+                         drawer=dict(enabled=cfg["drawer"], pin=cfg["pin"]), autoprint=cfg["autoprint"], shop=dict(name=cfg["name"], lines=cfg["lines"]))
+    try:
+        if a == ["hardware", "test-print"] and m == "POST":
+            printer.send(escpos.test_page(cfg).bytes())
+            audit(c, u, "printer test")
+            return 200, {"printed": True}
+        if a == ["hardware", "test-drawer"] and m == "POST":
+            d = escpos.Doc(cfg["width"])
+            d.kick(cfg["pin"])
+            printer.send(d.bytes())
+            audit(c, u, "drawer test")
+            return 200, {"opened": True}
+    except printer.PrinterError as e:
+        return 503, {"error": str(e)}
+    return 404, {"error": "Not found"}
+
+
+# THE ROUTER. Every request (after sign-in) arrives here.
+#   a = the web address split into parts, e.g. /api/products/123 becomes ["products", "123"]
+#   m = GET / POST / PUT / DELETE      u = the signed-in user      b = the data the page sent
+# Routes are checked from top to bottom. Routes ABOVE "if not admin" can be used by cashiers; routes BELOW are ADMIN ONLY.
+# TO ADD AN ENDPOINT: add an  if a == [...] and m == "...":  block in the right place (above or below the admin line).
 def api(c, m, p, u, b):
     a = p.split("/")[2:]
     admin = u["role"] == "admin"
     if a == ["me"]:
-        return 200, {"name": u["name"], "role": u["role"], "mode": mpesa.mode()}
+        return 200, {"name": u["name"], "role": u["role"], "mode": mpesa.mode(), "printer": printer.configured(), "autoprint": printer.settings()["autoprint"]}
     if a == ["products"] and m == "GET":
         return 200, [prod(r, admin) for r in c.execute("SELECT * FROM products ORDER BY rowid")]
     if a == ["sales"] and m == "POST":  # only cashiers can process sales
@@ -276,10 +445,17 @@ def api(c, m, p, u, b):
         if len(a) == 3 and a[1] == "status":
             return mpesa_status(c, u, a[2])
         return 404, {"error": "Not found"}
+    if a[:2] == ["print", "receipt"] and len(a) == 3 and m == "POST":
+        return print_receipt(c, u, a[2])
+    # Everything below this line is ADMIN ONLY.
     if not admin:
         return 403, {"error": "Admin access required"}
+    if a[:1] == ["hardware"]:
+        return hardware_api(c, m, a, u, b)
     if a == ["dashboard"]:
         return dashboard(c)
+    if a[:1] == ["fraud"]:
+        return fraud_api(c, m, a, u, b)
     if a == ["sales"]:
         rows = c.execute("SELECT * FROM sales ORDER BY created_at DESC, rowid DESC LIMIT 100").fetchall()
         return 200, [receipt(c, r) for r in rows]
@@ -323,6 +499,7 @@ def api(c, m, p, u, b):
     return 404, {"error": "Not found"}
 
 
+# The web server part. Python's built-in server calls these methods for each request.
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -335,10 +512,13 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    # Handles EVERY request. Anything that is not /api/... gets the page (index.html). API calls need a valid sign-in token and are then
+    # passed to api(). If something goes wrong the real error is printed in THIS window (traceback) and the browser gets a friendly message.
     def handle_any(self, m):
         p = urlparse(self.path).path
         if not p.startswith("/api/"):
-            b = open(os.path.join(ROOT, "index.html"), "rb").read()
+            with open(os.path.join(ROOT, "index.html"), "rb") as fh:
+                b = fh.read()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(b)))
@@ -388,7 +568,25 @@ class H(BaseHTTPRequestHandler):
     do_DELETE = lambda self: self.handle_any("DELETE")
 
 
+# Background thread: runs the fraud scan when the server starts and then every N minutes (SMARTPOS_SCAN_MINUTES, default 15).
+def scan_loop(minutes):
+    """Runs the fraud scan at start-up and then every few minutes while the server is running."""
+    while True:
+        try:
+            conn = new_conn()
+            try:
+                fraud_engine.run(conn)
+            finally:
+                conn.close()
+        except Exception:
+            traceback.print_exc()
+        time.sleep(minutes * 60)
+
+
+# START-UP: prepare the database, start the fraud scanner, then serve on http://localhost:8000.
+# 127.0.0.1 means only THIS computer can connect. To let tills on the shop network connect you would change it (and add HTTPS first).
 if __name__ == "__main__":
     init()
+    threading.Thread(target=scan_loop, args=(int(os.environ.get("SMARTPOS_SCAN_MINUTES", "15")),), daemon=True).start()
     print("SmartPOS running at http://localhost:8000  (Ctrl+C to stop)")
     ThreadingHTTPServer(("127.0.0.1", 8000), H).serve_forever()

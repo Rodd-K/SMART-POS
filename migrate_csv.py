@@ -1,6 +1,8 @@
 """One-time import of the CSV files in data/ into smartpos.db.
 Backs up data/ first, imports everything in one transaction, checks the totals,
 and rolls back if anything does not match. Your CSV files are never changed."""
+# One-time tool: copies the very early CSV data (data/*.csv) into the database. It backs up data/ first, imports everything in ONE
+# transaction, checks the counts and money totals, and cancels the whole import if anything does not match. Run it once: python3 migrate_csv.py
 import csv, os, shutil, sys
 from datetime import datetime
 from decimal import Decimal
@@ -11,6 +13,7 @@ DATA = os.environ.get("SMARTPOS_DATA", os.path.join(db.ROOT, "data"))
 cents = lambda v: int((Decimal(str(v or 0)) * 100).to_integral_value())
 
 
+# Reads one CSV file as a list of rows.
 def rows(name):
     p = os.path.join(DATA, name + ".csv")
     if not os.path.exists(p):
@@ -19,10 +22,12 @@ def rows(name):
         return list(csv.DictReader(f))
 
 
+# Inserts many rows into one table.
 def put(c, table, cols, values):
     c.executemany(f"INSERT INTO {table}({','.join(cols)}) VALUES({','.join('?' * len(cols))})", values)
 
 
+# Backup, import, verify, done. It refuses to run if the database already has data.
 def main():
     if not os.path.isdir(DATA):
         sys.exit(f"No data folder found at {DATA}")
