@@ -35,12 +35,15 @@ CFG = dict(
     repeat_adjustments=3,     # downward adjustments by one person in one day
     open_hour=6, close_hour=22,   # sales or stock changes outside these hours are unusual
     mpesa_failures=5,         # failed, cancelled or timed-out M-Pesa prompts by one cashier in one day
+    manual_verify_hours=24,   # a manual M-Pesa payment still unchecked after this many hours is flagged
+    manual_per_day=3,         # a cashier confirming this many M-Pesa payments by hand in one day is flagged
     login_failures=5,         # wrong passwords for one username in one day
     spike_factor=3.0, spike_min_days=5, spike_min_value=2000.0,  # a day far above that cashier's own normal
 )
 # Points each kind of finding adds to a person's risk.
 SCORES = dict(big_writeoff=30, repeat_adjustments=20, after_hours=15, mpesa_review=40,
-              mpesa_failures=20, login_failures=25, sales_spike=15)
+              mpesa_failures=20, login_failures=25, sales_spike=15,
+              manual_online=40, manual_unverified=20, manual_disputed=50, manual_frequent=25)
 # Formats cents as "KES 1,560.00" for the plain-language reasons.
 KES = lambda cents: f"KES {cents / 100:,.2f}"
 
@@ -138,8 +141,31 @@ def rule_sales_spike(c, since, cfg):
                               f"{who}|{d}", d + "T23:59:59", total_kes=total / 100, normal_kes=round(mean / 100, 2))
 
 
+def rule_manual_mpesa(c, since, cfg):
+    """RULE: M-Pesa payments a cashier confirmed BY EYE (no Safaricom confirmation). Four things are flagged:
+    taken while the system was online, not checked against the statement after manual_verify_hours, disputed by a manager,
+    and a cashier using it manual_per_day times or more in one day."""
+    cutoff = (datetime.now() - timedelta(hours=cfg["manual_verify_hours"])).isoformat(timespec="seconds")
+    for r in c.execute("SELECT m.*, u.name FROM mpesa_manual m JOIN users u ON u.id=m.cashier_id WHERE substr(m.created_at,1,10)>=?", (since,)):
+        what = f"{r['name']}'s manual M-Pesa payment {r['code']} ({KES(r['amount_cents'])})"
+        if r["status"] == "disputed":
+            yield finding("manual_disputed", r["name"], "Manual M-Pesa payment disputed", f"{what} was marked by a manager as NOT matching the M-Pesa statement.",
+                          r["id"], r["created_at"], code=r["code"], amount_kes=r["amount_cents"] / 100)
+        elif r["status"] == "unverified":
+            if r["online_when_taken"]:
+                yield finding("manual_online", r["name"], "Manual M-Pesa while online", f"{what} was confirmed by hand while the system COULD reach Safaricom.",
+                              r["id"], r["created_at"], code=r["code"], amount_kes=r["amount_cents"] / 100)
+            if r["created_at"] < cutoff:
+                yield finding("manual_unverified", r["name"], "Manual M-Pesa not yet checked", f"{what} has not been compared with the M-Pesa statement after {cfg['manual_verify_hours']} hours.",
+                              r["id"], r["created_at"], code=r["code"], amount_kes=r["amount_cents"] / 100)
+    for r in c.execute("SELECT u.name, substr(m.created_at,1,10) d, COUNT(*) n, MAX(m.created_at) last FROM mpesa_manual m JOIN users u ON u.id=m.cashier_id "
+                       "WHERE substr(m.created_at,1,10)>=? GROUP BY 1,2 HAVING n>=?", (since, cfg["manual_per_day"])):
+        yield finding("manual_frequent", r["name"], "Frequent manual M-Pesa", f"{r['name']} confirmed {r['n']} M-Pesa payments by hand on {r['d']}.",
+                      f"{r['name']}|{r['d']}", r["last"], count=r["n"])
+
+
 # The rules the scan runs. Add a new rule's name here.
-RULES = [rule_big_writeoff, rule_repeat_adjustments, rule_after_hours, rule_mpesa_review, rule_mpesa_failures, rule_login_failures, rule_sales_spike]
+RULES = [rule_big_writeoff, rule_repeat_adjustments, rule_after_hours, rule_mpesa_review, rule_mpesa_failures, rule_login_failures, rule_sales_spike, rule_manual_mpesa]
 
 
 # Runs every rule over the last N days and saves only the NEW findings (INSERT OR IGNORE skips ones already saved). Safe to run as often as you like.

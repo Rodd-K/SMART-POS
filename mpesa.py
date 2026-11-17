@@ -14,7 +14,11 @@ from datetime import datetime
 
 # Reads the .env file into the program's settings. A real environment variable wins over the file (setdefault).
 def _load_env():
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    config_dir = os.environ.get(
+        "SMARTPOS_CONFIG_DIR",
+        os.path.dirname(os.path.abspath(__file__))
+    )
+    p = os.path.join(config_dir, ".env")
     if os.path.exists(p):
         for line in open(p, encoding="utf-8"):
             line = line.strip()

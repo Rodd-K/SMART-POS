@@ -12,6 +12,9 @@ How the code fits together and how to change it safely. Every script also has pl
 | `mpesa.py` | Talks to Safaricom Daraja (payment prompt, status check). |
 | `exporter.py` | Builds the Excel/CSV files on the Export tab. |
 | `fraud/engine.py` | The fraud rules, scoring and risk levels. |
+| `accounts.py` | The rules for staff accounts: password strength, usernames, lockout. Change a number here to change the rule. |
+| `reset_admin.py` | Emergency tool for a forgotten admin password (run on the shop computer). |
+| `connectivity.py` | Answers "can we reach Safaricom right now?" for the Online / No internet label. |
 | `hardware/escpos.py` | Lays out the receipt for a thermal printer. |
 | `hardware/printer.py` | Sends it to the printer (network, Linux, Windows). |
 | `backup.py`, `migrate_csv.py` | Command-line tools: safe backup and restore, and the one-time CSV import. |
@@ -65,11 +68,34 @@ Edit `receipt()` in `hardware/escpos.py`. It reads top to bottom, in print order
 ### Change colours
 Edit the CSS variables at the top of `index.html`: `body.pos{...}` is the cashier screen, `body.adm{...}` is the admin screen, and `PAL` in the script is the product category palette.
 
-### Change the demo passwords
-There is no change-password screen yet (planned). Until then, with the server stopped, run this in the project folder (change NEWPASSWORD and the username):
-```
-python3 -c "import server,secrets;c=server.new_conn();s=secrets.token_hex(8);c.execute('UPDATE users SET salt=?,hash=? WHERE username=?',(s,server.hp('NEWPASSWORD',s),'admin'))"
-```
+### Add a role (for example "manager")
+1. `accounts.py`: add the role to `ROLES`.
+2. `db.py`: the users table only allows 'admin' and 'cashier', so add a numbered migration that rebuilds that table with the new role allowed.
+3. `server.py`: decide in `api()` which routes the role may use (routes above `if not admin` are open to every signed-in person).
+4. `index.html`: add the role to the dropdowns in `staffView()` and to `route()` if it needs its own screen.
+5. Add tests in `tests/test_accounts.py`.
+
+### Change the password or lockout rules
+Edit the numbers at the top of `accounts.py` (`MIN_LENGTH`, `MAX_FAILURES`, `LOCK_MINUTES`) and run the tests.
+
+### Understand accounts and sessions
+- `setup()` creates the first admin once (the set-up screen). `login()` checks the password, applies the lockout and starts a session.
+- A session is a token. `session_user()` reads the person's record fresh on every request, so switching someone off or changing a password takes effect at once.
+- Someone with `must_change_password` can use nothing except `/api/password` and `/api/me` until they choose their own password.
+- Staff are managed by `users_api()` (admin only). People are never deleted, and there is always at least one active admin.
+
+### Understand the outage handling
+- `connectivity.online()` is asked by the cashier screen every 15 seconds (`netCheck()` in `index.html`) and by `mpesa_start()` before sending a prompt.
+- `recover_payments()` in `server.py` runs every 2 minutes (`recovery_loop`). It asks Safaricom about payments that never got a result and finishes them.
+- `settle()` has the **double-sale guard**: if the cashier has made any other sale since the prompt was sent, the payment is held for a manager instead of being recorded.
+- Tests for all of this are in `tests/test_offline.py`.
+
+### Understand the manual M-Pesa checkout
+- `mpesa_manual()` in `server.py` is the Checkout button's endpoint. It records the sale AND a row in the `mpesa_manual` table (migration 4) in one transaction.
+- `manual_admin()` lists those rows for the M-Pesa tab and lets an admin mark them Verified or Disputed.
+- `rule_manual_mpesa()` in `fraud/engine.py` flags the risky patterns. Tune `manual_verify_hours` and `manual_per_day` in `CFG`.
+- In `index.html`: `effOff()` says whether we are working offline, `toggleOffline()` is the Online/Offline button, `manualCheckout()` is the Checkout button.
+- Tests are in `tests/test_manual_mpesa.py`.
 
 ## 5. When something goes wrong
 

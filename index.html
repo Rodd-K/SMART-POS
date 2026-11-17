@@ -73,6 +73,7 @@ input,select{width:100%;padding:.6rem .8rem;border-radius:10px;border:1.5px soli
 .fa .top2{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}.fa .meta{color:var(--mut);font-size:.82rem}
 .risk{display:flex;gap:.7rem;flex-wrap:wrap}.rcard{background:var(--panel);border-radius:14px;padding:.8rem 1rem;border-top:4px solid var(--k);min-width:160px;display:grid;gap:.2rem}.rcard b{font-size:1.5rem;color:var(--k)}
 textarea{width:100%;min-height:90px;padding:.6rem .8rem;border-radius:10px;border:1.5px solid var(--line);background:var(--panel);color:var(--ink);font:inherit}
+button.sm{padding:.3rem .65rem;font-size:.82rem}
 code{font-family:ui-monospace,Menlo,monospace;background:#0003;padding:.05rem .35rem;border-radius:6px;font-size:.85em}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 /* When the browser prints (fallback when no receipt printer is set up), only the receipt is shown. */
@@ -111,33 +112,54 @@ async function logout(){try{await api('logout','POST')}catch{}localStorage.remov
 // The sign-in screen.
 function loginView(){
  document.body.className='login';
- app.innerHTML=`<div class=center><form class=card id=f><div class=logo>Smart<span>POS</span></div><p class=mut>Sign in to start your shift.</p>
+ app.innerHTML=`<div class=center><form class=card id=f><div class=logo>Smart<span>POS</span></div><p id=bn class=mut style="margin:0;font-weight:700"></p><p class=mut>Sign in to start your shift. Forgotten your password? Ask your admin.</p>
  <input name=u placeholder="Username" autocomplete=username autofocus required><input name=p type=password placeholder="Password" autocomplete=current-password required><button>Sign in</button></form></div>`;
  $('#f').onsubmit=async e=>{e.preventDefault();const f=e.target;
   try{const r=await api('login','POST',{username:f.u.value,password:f.p.value});T=r.token;localStorage.setItem('spos',T);ME=r.user;route()}
-  catch(x){toast(x.message,1)}}}
+  catch(x){toast(x.message,1)}}
+ api('setup/status').then(s=>{if(s.needed)setupView();else if(s.business&&$('#bn'))$('#bn').textContent=s.business}).catch(()=>{})}
 
 // After sign-in: admins go to the admin screen, cashiers to the cashier screen. To add a role, change it here.
-async function route(){ME.role=='admin'?adm():pos()}
+async function route(){if(ME.must_change)return pwForm(true);ME.role=='admin'?adm():pos()}
 
 /* ---------- Cashier ---------- */
 // THE CASHIER SCREEN. Builds the page, loads the products, and connects the search box, tiles, cart buttons and the Charge button.
+// netCheck(): every 15 seconds ask the server whether we are online (can reach Safaricom). Shows "Online" or "No internet" in the top bar.
+// With no internet the M-Pesa button is switched off and the cashier is told to take cash: cash sales never need the internet.
+let NET=true,netT,FORCE=false;
+// effOff(): are we working OFFLINE? True when the system cannot reach Safaricom, or when the cashier pressed the Online/Offline button to say so.
+const effOff=()=>FORCE||(!NET&&ME.mode!='simulated');
+async function netCheck(){
+ if(document.body.className!='pos')return;
+ try{NET=(await api('health')).online}catch(x){NET=false}
+ netView()}
+// netView(): makes the Online/Offline button and the M-Pesa panel match the situation.
+function netView(){
+ const off=effOff(),e=$('#net');
+ if(e){e.textContent=off?'Offline':'Online';e.style.setProperty('--c',off?'#E8A200':'#17B890');
+  e.title=off?(FORCE?'You set the system to Offline. Press to go back Online.':'No internet detected.'):'Press to work Offline, for example if the customer phone cannot receive an M-Pesa prompt.'}
+ if($('#netmsg'))$('#netmsg').style.display=off&&method=='mpesa'?'':'none';
+ upd()}
+// toggleOffline(): the Online/Offline button in the top bar. When the system itself has no internet it is Offline whatever you press.
+function toggleOffline(){
+ if(!NET&&ME.mode!='simulated')return toast('No internet detected. The system stays Offline until the connection returns.',1);
+ FORCE=!FORCE;netView()}
 async function pos(){
- document.body.className='pos';cart={};cat='All';method='cash';
- app.innerHTML=`<header class=top><b class=logo>Smart<span>POS</span></b><span class=mut>${esc(ME.name)}</span><button class=ghost onclick=logout()>Sign out</button></header>
+ document.body.className='pos';cart={};cat='All';method='cash';FORCE=false;
+ app.innerHTML=`<header class=top><b class=logo>Smart<span>POS</span></b><button id=net class=pill onclick=toggleOffline() style="--c:#17B890">Online</button><span class=mut>${esc(ME.name)}</span><button class=ghost onclick=pwForm(false)>Password</button><button class=ghost onclick=logout()>Sign out</button></header>
  <main class=posgrid><section><div class=bar><input id=q placeholder="Search products or scan a barcode" autofocus><div id=chips class=chips></div></div><div id=grid class=grid></div></section>
  <aside class=cart><h3>Current sale</h3><div id=lines class=lines></div><div class=total><span>Total</span><span id=tot></span></div>
  <div class=seg><button data-m=cash class=on>Cash</button><button data-m=mpesa>M-Pesa${ME.mode=='simulated'?' (simulated)':''}</button></div>
- <div id=phonebox style="display:none"><input id=phone inputmode=tel placeholder="Customer phone, e.g. 0712345678"></div><div id=cashbox><input id=tend inputmode=decimal placeholder="Cash received"><div class=quick id=quick></div><p id=chg class=mut></p></div>
- <button id=pay disabled>Charge</button></aside></main>`;
- P=await api('products');chips();grid();lines();
+ <p id=netmsg class=mut style="display:none;margin:0">Offline: an M-Pesa prompt cannot be sent. Ask the customer to show their M-Pesa message, check it, and use Checkout. Or take cash.</p><div id=phonebox style="display:none"><input id=phone inputmode=tel placeholder="Customer phone, e.g. 0712345678"></div><div id=manualbox style="display:none;gap:.5rem"><input id=mcode placeholder="M-Pesa code from the message, e.g. SKL4X5Y6Z7" maxlength=10 autocapitalize=characters autocomplete=off><input id=mamt inputmode=decimal placeholder="Amount in the message (KES)"></div><div id=cashbox><input id=tend inputmode=decimal placeholder="Cash received"><div class=quick id=quick></div><p id=chg class=mut></p></div>
+ <button id=pay disabled>Charge</button><button id=manual class=ghost style="display:none" disabled>Checkout</button></aside></main>`;
+ P=await api('products');chips();grid();lines();netCheck();clearInterval(netT);netT=setInterval(netCheck,15000);
  $('#q').oninput=grid;
  $('#q').onkeydown=e=>{if(e.key=='Enter'){const v=e.target.value.trim(),b=v&&P.find(p=>p.barcode&&p.barcode==v);if(b){add(b.id);beep();e.target.value='';grid()}else if(/^\d{6,}$/.test(v)){toast('No product has the barcode '+v,1);beep(true);e.target.value='';grid()}}};
  $('#grid').onclick=e=>{const t=e.target.closest('.tile');if(t){add(t.dataset.id);t.classList.remove('pop');void t.offsetWidth;t.classList.add('pop')}};
  $('#chips').onclick=e=>{const c=e.target.closest('.chip');if(c){cat=c.dataset.c;chips();grid()}};
  $('#lines').onclick=e=>{const b=e.target.closest('[data-d]');if(b){chg(b.dataset.id,+b.dataset.d)}};
  $('.seg').onclick=e=>{const b=e.target.closest('button');if(!b)return;method=b.dataset.m;document.querySelectorAll('.seg button').forEach(x=>x.classList.toggle('on',x==b));upd()};
- $('#tend').oninput=upd;$('#phone').oninput=upd;$('#pay').onclick=charge;
+ $('#tend').oninput=upd;$('#phone').oninput=upd;$('#pay').onclick=charge;$('#mcode').oninput=e=>{e.target.value=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'');upd()};$('#mamt').oninput=upd;$('#manual').onclick=manualCheckout;
  $('#quick').onclick=e=>{if(e.target.dataset.v){$('#tend').value=e.target.dataset.v;upd()}}}
 // The category buttons above the products.
 function chips(){const cs=['All',...new Set(P.map(p=>p.category))];$('#chips').innerHTML=cs.map(c=>`<button class="chip ${c==cat?'on':''}" style="--c:${c=='All'?'#1B1F3B':col(c)}" data-c="${esc(c)}">${esc(c)}</button>`).join('')}
@@ -157,16 +179,28 @@ function lines(){
  const t=sum();$('#quick').innerHTML=t?[`<button class=ghost data-v="${t}">Exact</button>`,...[100,200,500,1000,2000].filter(v=>v>=t).slice(0,3).map(v=>`<button class=ghost data-v="${v}">${v}</button>`)].join(''):'';upd()}
 // Updates the total, the change due, and whether the Charge button is enabled.
 function upd(){
- const t=sum(),m=method=='mpesa',v=+$('#tend').value||0;
- $('#tot').textContent=money(t);$('#cashbox').style.display=m?'none':'';$('#phonebox').style.display=m&&ME.mode!='simulated'?'':'none';
+ const t=sum(),m=method=='mpesa',v=+$('#tend').value||0,off=effOff(),live=m&&ME.mode!='simulated';
+ $('#tot').textContent=money(t);$('#cashbox').style.display=m?'none':'';
+ $('#phonebox').style.display=m&&(live||off)?'':'none';$('#manualbox').style.display=m&&off?'grid':'none';
  $('#chg').textContent=!t?'':v>=t?`Change: ${money(v-t)}`:v?`Short by ${money(t-v)}`:'';
- const live=m&&ME.mode!='simulated';$('#pay').disabled=!t||(!m&&v<t)||(live&&$('#phone').value.replace(/\D/g,'').length<9);$('#pay').textContent=m?(live?'Send M-Pesa prompt':'Charge M-Pesa (simulated)'):'Charge cash'}
+ // Online: the main button sends a prompt to the customer's phone (Safaricom confirms the payment). Offline: that button is off and Checkout is used instead.
+ $('#pay').disabled=!t||(!m&&v<t)||(m&&off)||(live&&$('#phone').value.replace(/\D/g,'').length<9);
+ $('#pay').textContent=m?(live||off?'Send M-Pesa prompt':'Charge M-Pesa (simulated)'):'Charge cash';
+ const mb=$('#manual');mb.style.display=m&&off?'':'none';
+ mb.disabled=!t||!/^[A-Z0-9]{10}$/.test($('#mcode').value)||Math.round((+$('#mamt').value)*100)!=Math.round(t*100)}
 // Pressed on Charge: sends the sale to the server. M-Pesa sales go to mpesaPay() instead. A new ref is made after a successful sale.
 async function charge(){
  if(method=='mpesa'&&ME.mode!='simulated')return mpesaPay();
  const b=$('#pay');b.disabled=true;
  try{const r=await api('sales','POST',{client_ref:ref,method,tendered:$('#tend').value,items:Object.entries(cart).map(([product_id,qty])=>({product_id,qty}))});
   ref=crypto.randomUUID();cart={};$('#tend').value='';P=await api('products');grid();lines();receipt(r)}
+ catch(x){toast(x.message,1);upd()}}
+// manualCheckout(): the Checkout button, used when there is no internet. The cashier has looked at the customer's M-Pesa message and typed
+// its code and amount. The server records the sale as "to be verified"; a manager later compares it with the M-Pesa statement.
+async function manualCheckout(){
+ const b=$('#manual');b.disabled=true;
+ try{const r=await api('mpesa/manual','POST',{client_ref:ref,items:Object.entries(cart).map(([product_id,qty])=>({product_id,qty})),code:$('#mcode').value,amount:$('#mamt').value,phone:$('#phone').value,override:FORCE&&NET});
+  ref=crypto.randomUUID();cart={};$('#mcode').value='';$('#mamt').value='';P=await api('products');grid();lines();receipt(r);toast('Sale recorded. A manager will check this M-Pesa payment against the statement.')}
  catch(x){toast(x.message,1);upd()}}
 // M-Pesa sale: asks the server to send the prompt, then checks every 3 seconds whether the customer has paid. The sale is only recorded by the server once Safaricom confirms.
 async function mpesaPay(){
@@ -188,11 +222,11 @@ function receipt(s){if(ME.autoprint)setTimeout(()=>printReceipt(s.receipt_no),50
 
 /* ---------- Admin ---------- */
 // THE ADMIN MENU. Each entry is [tab id, label]. To add a tab: add it here, then add an  if(tab=='yourid'){...}  block inside view() below.
-const NAV=[['over','Overview'],['fraud','Fraud'],['stock','Stock'],['sales','Sales'],['mpesa','M-Pesa'],['log','Stock log'],['hw','Hardware'],['export','Export']];
+const NAV=[['over','Overview'],['fraud','Fraud'],['stock','Stock'],['sales','Sales'],['mpesa','M-Pesa'],['log','Stock log'],['staff','Staff'],['hw','Hardware'],['export','Export']];
 // THE ADMIN SCREEN: the side menu and the area where each tab is drawn.
 function adm(){
  document.body.className='adm';
- app.innerHTML=`<div class=shell><nav class=side><b class=logo>Smart<span>POS</span></b>${NAV.map(([k,l])=>`<button data-t=${k} class="${k==tab?'on':''}">${l}${k=='fraud'?'<b class=badge id=fb></b>':''}</button>`).join('')}<button class="out ghost" onclick=logout()>Sign out</button></nav><section id=main class=main></section></div>`;
+ app.innerHTML=`<div class=shell><nav class=side><b class=logo>Smart<span>POS</span></b>${NAV.map(([k,l])=>`<button data-t=${k} class="${k==tab?'on':''}">${l}${k=='fraud'?'<b class=badge id=fb></b>':''}</button>`).join('')}<button onclick=pwForm(false)>My password</button><button class="out ghost" onclick=logout()>Sign out</button></nav><section id=main class=main></section></div>`;
  $('.side').onclick=e=>{const b=e.target.closest('[data-t]');if(b){tab=b.dataset.t;document.querySelectorAll('.side [data-t]').forEach(x=>x.classList.toggle('on',x==b));view()}};view();fraudBadge()}
 // Downloads an export file for the dates chosen on the Export tab.
 async function dl(n){const f=$('#xf').value,t=$('#xt').value,q=new URLSearchParams();if(f)q.set('from',f);if(t)q.set('to',t);
@@ -248,6 +282,44 @@ let AC;function beep(bad){try{AC=AC||new(window.AudioContext||window.webkitAudio
 // A barcode scanner types like a keyboard. If the cursor is not in a box, send the typing to the search box so a scan works wherever the cursor is.
 document.addEventListener('keydown',e=>{if(document.body.className!='pos'||$('#ov')||e.ctrlKey||e.altKey||e.metaKey||e.key.length!=1)return;if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))return;const q=$('#q');if(q)q.focus()});
 // DRAWS THE CURRENT ADMIN TAB. One  if(tab=='...')  block per tab. It asks the server for the data, then builds the HTML.
+// FIRST-RUN SET-UP SCREEN: shown only while the install has no accounts. The installer enters the business name and creates the admin with a password they choose.
+function setupView(){
+ document.body.className='login';
+ app.innerHTML=`<div class=center><form class=card id=f style="width:min(440px,100%)"><div class=logo>Smart<span>POS</span></div><h3>Set up this business</h3><p class=mut>This is the first start. Create the administrator account. You can add cashiers afterwards in the Staff tab.</p>
+ <input name=b placeholder="Business name" required><input name=n placeholder="Your full name" required><input name=u placeholder="Username (for example admin)" value=admin autocomplete=username required>
+ <input name=p type=password placeholder="Password (at least 8 characters)" autocomplete=new-password required><input name=p2 type=password placeholder="Repeat the password" autocomplete=new-password required><button>Create and sign in</button></form></div>`;
+ $('#f').onsubmit=async e=>{e.preventDefault();const f=e.target;if(f.p.value!=f.p2.value)return toast('The two passwords do not match',1);
+  try{const r=await api('setup','POST',{business:f.b.value,name:f.n.value,username:f.u.value,password:f.p.value});T=r.token;localStorage.setItem('spos',T);ME=r.user;route()}catch(x){toast(x.message,1)}}}
+// CHANGE PASSWORD. forced=true is the full-screen version shown right after someone signs in with a password someone else chose.
+function pwForm(forced){
+ const html=`<h3>${forced?'Choose your own password':'Change your password'}</h3>${forced?'<p class=mut>Your current password was set by someone else. Choose one that only you know.</p>':''}
+ <input id=pc type=password placeholder="Current password" autocomplete=current-password><input id=pn type=password placeholder="New password (at least 8 characters)" autocomplete=new-password><input id=pr type=password placeholder="Repeat the new password" autocomplete=new-password>
+ <div class=acts>${forced?'':'<button class=ghost onclick=closeModal()>Cancel</button>'}<button id=pk>Save password</button></div>`;
+ if(forced){document.body.className='login';app.innerHTML=`<div class=center><div class=card>${html}</div></div>`}else modal(html);
+ $('#pk').onclick=async()=>{if($('#pn').value!=$('#pr').value)return toast('The two new passwords do not match',1);
+  try{await api('password','POST',{current:$('#pc').value,new:$('#pn').value});ME.must_change=false;if(!forced)closeModal();toast('Password changed');if(forced)route()}catch(x){toast(x.message,1)}}}
+// THE STAFF TAB: who can sign in. Add a person, edit them, reset their password, switch them off or on, unlock them. Nobody is deleted, so their history stays.
+let USERS=[];
+function genPw(){const c='abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789',a=new Uint32Array(10);crypto.getRandomValues(a);return[...a].map(x=>c[x%c.length]).join('')}
+async function staffView(){
+ USERS=await api('users');const m=$('#main');
+ const st=u=>u.locked?['Locked','#FF4D6D']:!u.active?['Switched off','#9094BF']:u.must_change?['Must set password','#FFB020']:['Active','#2EE6A6'];
+ m.innerHTML=`<div class=row><h2>Staff</h2><button style="margin-left:auto" data-a=add>Add person</button></div>
+ <p class=empty style="text-align:left;padding:0">Everyone signs in with their own account, so every sale and stock change is linked to a person. People are switched off, not deleted, so their history stays. A new person is asked to choose their own password at first sign-in.</p>`+
+ tbl(['Name','Username','Role','Status','Last sign-in','Actions'],USERS.map(u=>{const s=st(u);return[`<b>${esc(u.name)}</b>`,esc(u.username),`<span class=pill style="--c:${u.role=='admin'?'#7C5CFF':'#4D96FF'}">${u.role}</span>`,`<span class=pill style="--c:${s[1]}">${s[0]}</span>`,esc((u.last_login||'never').replace('T',' ').slice(0,16)),
+  `<button class="ghost sm" data-a=edit data-id=${u.id}>Edit</button> <button class="ghost sm" data-a=reset data-id=${u.id}>Reset password</button> ${u.locked?`<button class="ghost sm" data-a=unlock data-id=${u.id}>Unlock</button> `:''}<button class="ghost sm" data-a=toggle data-id=${u.id}>${u.active?'Switch off':'Switch on'}</button>`]}),'No staff yet.');
+ m.onclick=async e=>{const b=e.target.closest('[data-a]');if(!b)return;const u=USERS.find(x=>x.id==b.dataset.id),a=b.dataset.a;
+  try{
+   if(a=='add'){const pw=genPw();modal(`<h3>Add a person</h3><input id=un placeholder="Full name"><input id=uu placeholder="Username (lowercase, for example mary)" autocapitalize=off><select id=ur><option value=cashier>Cashier (sells only)</option><option value=admin>Admin (manages everything)</option></select>
+    <label class=mut style="display:grid;gap:.3rem">Starting password (they must change it at first sign-in)<input id=up value="${pw}"></label><div class=acts><button class=ghost onclick=closeModal()>Cancel</button><button id=ok>Add person</button></div>`);
+    $('#ok').onclick=async()=>{try{const n=await api('users','POST',{name:$('#un').value,username:$('#uu').value,role:$('#ur').value,password:$('#up').value});const p=$('#up').value;closeModal();modal(`<h3>${esc(n.name)} can now sign in</h3><p>Username: <b>${esc(n.username)}</b><br>Starting password: <b>${esc(p)}</b></p><p class=mut>Give them these details. They will choose their own password the first time they sign in. This password will not be shown again.</p><div class=acts><button onclick="closeModal();view()">Done</button></div>`)}catch(x){toast(x.message,1)}}}
+   if(a=='edit'){modal(`<h3>Edit ${esc(u.name)}</h3><input id=un value="${esc(u.name)}"><select id=ur><option value=cashier ${u.role=='cashier'?'selected':''}>Cashier</option><option value=admin ${u.role=='admin'?'selected':''}>Admin</option></select><div class=acts><button class=ghost onclick=closeModal()>Cancel</button><button id=ok>Save</button></div>`);
+    $('#ok').onclick=async()=>{try{await api('users/'+u.id,'PUT',{name:$('#un').value,role:$('#ur').value});closeModal();toast('Saved');view()}catch(x){toast(x.message,1)}}}
+   if(a=='reset'){const pw=genPw();modal(`<h3>Reset password for ${esc(u.name)}</h3><label class=mut style="display:grid;gap:.3rem">New starting password<input id=up value="${pw}"></label><p class=mut>They must choose their own password at next sign-in. This also unlocks the account.</p><div class=acts><button class=ghost onclick=closeModal()>Cancel</button><button id=ok>Reset</button></div>`);
+    $('#ok').onclick=async()=>{try{await api('users/'+u.id+'/reset-password','POST',{password:$('#up').value});const p=$('#up').value;closeModal();modal(`<h3>Password reset</h3><p>Give ${esc(u.name)} this starting password: <b>${esc(p)}</b></p><p class=mut>They will be asked to choose their own at next sign-in. It will not be shown again.</p><div class=acts><button onclick="closeModal();view()">Done</button></div>`)}catch(x){toast(x.message,1)}}}
+   if(a=='unlock'){await api('users/'+u.id+'/unlock','POST',{});toast('Unlocked');view()}
+   if(a=='toggle'){if(u.active&&!confirm('Switch off '+u.name+'? They will be signed out and cannot sign in until you switch them on again. Their history stays.'))return;await api('users/'+u.id,'PUT',{active:!u.active});toast(u.active?'Switched off':'Switched on');view()}
+  }catch(x){toast(x.message,1)}}}
 async function view(){
  const m=$('#main');
  try{
@@ -270,19 +342,28 @@ async function view(){
   const run=async(path,msg)=>{try{await api(path,'POST',{});toast(msg)}catch(x){toast(x.message,1)}};
   $('#tp').onclick=()=>run('hardware/test-print','Test page sent');$('#td').onclick=()=>run('hardware/test-drawer','Drawer signal sent')}
  // Fraud tab (see fraudView).
+ if(tab=='staff'){await staffView()}
  if(tab=='fraud'){await fraudView()}
  // Stock tab (see stockView).
  if(tab=='stock'){P=await api('products');stockView()}
  // Sales tab: the last 100 sales.
  if(tab=='sales'){const s=await api('sales');m.innerHTML=`<h2>Sales</h2>`+tbl(['Receipt','Time','Cashier','Payment','Items','Total'],s.map(x=>[esc(x.receipt_no),esc(x.created_at.replace('T',' ')),esc(x.cashier_name),x.method=='mpesa'?'M-Pesa':'Cash',esc(x.items.map(i=>i.qty+'× '+i.product_name).join(', ')).slice(0,60),`<b>${money(x.total)}</b>`]),'No sales recorded yet.')}
  // M-Pesa tab: every payment attempt and its status.
- if(tab=='mpesa'){const s=await api('mpesa');m.innerHTML=`<h2>M-Pesa payments</h2>`+tbl(['Time','Phone','Amount','Status','Receipt','Note'],s.map(x=>[esc(x.created_at.replace('T',' ')),esc(x.phone),money(x.amount),`<span class=pill style="--c:${x.status=='paid'?'#2EE6A6':x.status=='pending'?'#FFB020':'#FF4D6D'}">${esc(x.status)}</span>`,esc(x.receipt),esc(x.result_desc)]),'No M-Pesa payments yet.')}
+ if(tab=='mpesa'){const s=await api('mpesa'),mp=await api('mpesa/manual');m.innerHTML=`<h2>M-Pesa payments</h2>`+tbl(['Time','Phone','Amount','Status','Receipt','Note'],s.map(x=>[esc(x.created_at.replace('T',' ')),esc(x.phone),money(x.amount),`<span class=pill style="--c:${x.status=='paid'?'#2EE6A6':x.status=='pending'?'#FFB020':'#FF4D6D'}">${esc(x.status)}</span>`,esc(x.receipt),esc(x.result_desc)]),'No M-Pesa payments yet.')+
+  `<h3>Confirmed by the cashier (no internet)</h3><p class=empty style="text-align:left;padding:0">When there was no internet, the cashier checked the customer's M-Pesa message by eye. Compare each code with your M-Pesa statement, then mark it Verified or Disputed.</p>`+
+  tbl(['Time','Cashier and receipt','Code and phone','Amount','Taken','Status','Check'],mp.map(x=>[esc(x.created_at.slice(5,16).replace('T',' ')),`${esc(x.cashier)}<br><span class=mut>${esc(x.receipt_no)}</span>`,`<b>${esc(x.code)}</b>${x.phone?`<br><span class=mut>${esc(x.phone)}</span>`:''}`,money(x.amount),x.online_when_taken?'<span class=pill style="--c:#FF4D6D">while online</span>':'offline',`<span class=pill style="--c:${x.status=='verified'?'#2EE6A6':x.status=='disputed'?'#FF4D6D':'#FFB020'}">${x.status}</span>${x.checked_by?`<br><span class=mut>${esc(x.checked_by)}</span>`:''}`,
+   x.status=='verified'?'':`<button class="ghost sm" data-mr=verified data-id=${x.id}>Verified</button> <button class="ghost sm" data-mr=disputed data-id=${x.id}>Disputed</button>`]),'No manual payments yet.');
+  m.onclick=async e=>{const b=e.target.closest('[data-mr]');if(!b)return;const id=b.dataset.id;
+   const save=async(st,note)=>{try{await api('mpesa/manual/'+id+'/review','POST',{status:st,note});closeModal();toast(st=='verified'?'Marked as verified':'Marked as disputed');view()}catch(x){toast(x.message,1)}};
+   if(b.dataset.mr=='verified')return save('verified','');
+   modal(`<h3>Dispute this payment</h3><p class=mut>It does not appear on the M-Pesa statement, or the amount differs.</p><label class=mut style="display:grid;gap:.3rem">What did you find?<textarea id=dn maxlength=300></textarea></label><div class=acts><button class=ghost onclick=closeModal()>Cancel</button><button id=dk>Save</button></div>`);
+   $('#dk').onclick=()=>save('disputed',$('#dn').value)}}
  if(tab=='export'){const b=(n,l,d)=>`<div class=xrow><div><b>${l}</b><p class=empty style="padding:0;text-align:left">${d}</p></div><button onclick="dl('${n}')">Download</button></div>`;
  m.innerHTML=`<h2>Export data</h2><p class=empty style="text-align:left;padding:0 0 1rem">Files open in Excel. Pick dates to limit the records (leave blank for everything). Products are always exported in full.</p>
  <div class=xrow><div><b>Date range</b></div><div style="display:flex;gap:.5rem;align-items:center">From <input type=date id=xf> To <input type=date id=xt></div></div><div class=chips id=xp style="margin-bottom:.8rem">${[['today','Today'],['week','This week'],['month','This month'],['last','Last month'],['30','Last 30 days'],['clear','Clear dates']].map(([k,l])=>`<button class=chip data-p=${k}>${l}</button>`).join('')}</div>`
  +b('sales','Sales','One row per sale: receipt, cashier, payment method, total.')+b('sale_items','Sale items','One row per product sold, with cost and profit.')
  +b('products','Products and stock','Current prices, costs and stock levels.')+b('movements','Stock log','Every stock change, with reason and who made it.')
- +b('mpesa','M-Pesa payments','Every payment attempt and its result.')+b('audit','Audit log','Sign-ins, sales, edits and exports.')+b('fraud','Fraud report','Every fraud finding in the chosen dates (by when the activity happened): person, rule, score, reason and the manager decision.')+b('fraud_summary','Fraud summary by person','One row per person: number of findings, risk score and level, and how many were cleared or confirmed.')
+ +b('mpesa','M-Pesa payments','Every payment attempt and its result.')+b('audit','Audit log','Sign-ins, sales, edits and exports.')+b('mpesa_manual','Manual M-Pesa confirmations','Payments the cashier confirmed by hand when there was no internet, with their status, to compare with your M-Pesa statement.')+b('fraud','Fraud report','Every fraud finding in the chosen dates (by when the activity happened): person, rule, score, reason and the manager decision.')+b('fraud_summary','Fraud summary by person','One row per person: number of findings, risk score and level, and how many were cleared or confirmed.')
  +b('all','Everything (ZIP)','All of the above as one ZIP file.');$('#xp').onclick=e=>{const k=e.target.dataset.p;if(k)preset(k)}}
  // Stock log tab: every stock change.
  if(tab=='log'){const s=await api('movements');m.innerHTML=`<h2>Stock log</h2>`+tbl(['Time','Product','Type','Change','Stock after','Reason','By'],s.map(x=>[esc(x.created_at.replace('T',' ')),esc(x.product_name),`<span class=pill style="--c:${col(x.type)}">${esc(x.type)}</span>`,`<b style="color:${+x.qty_change<0?'#FF6B81':'#2EE6A6'}">${x.qty_change>0?'+':''}${esc(x.qty_change)}</b>`,esc(x.stock_after),esc(x.reason),esc(x.user_name)]),'No stock movements yet.')}

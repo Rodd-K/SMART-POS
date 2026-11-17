@@ -9,7 +9,11 @@ New to the code? Read **CODE_GUIDE.md** first: a map of the files, how a sale fl
 ```
 python3 server.py            # then open http://localhost:8000
 ```
-First start creates `smartpos.db` with two demo logins: `admin` / `admin123` and `cashier` / `cashier123`. **Change these before real use.**
+**First start of a new install:** the browser shows a **set-up screen**. Enter the business name and create the admin account with a password you choose.
+There are no default accounts and no sample data. The admin then adds the cashiers in the **Staff** tab (each person gets their own sign-in and
+chooses their own password at first sign-in). A lost admin password is reset with `python3 reset_admin.py` on the shop computer.
+
+**Developing?** Set `SMARTPOS_DEMO=1` in `.env` before the first start to get demo accounts (admin/admin123, cashier/cashier123) and sample products.
 If you still have old CSV data in `data/`, run `python3 migrate_csv.py` once first.
 
 ## Settings (M-Pesa)
@@ -42,6 +46,23 @@ Receipts print straight to the printer (no print window) and open the cash drawe
 Cashiers can print their own sale for 10 minutes; older reprints are for an admin. USB barcode scanners that act like a keyboard need no setup.
 If no printer is set up, receipts print through the browser as before.
 
+## When the internet drops
+Cash sales, stock, printing and scanning never need the internet, so the shop keeps trading. The cashier screen shows **Online** or **No internet**;
+with no internet the M-Pesa button is switched off and the cashier is told to take cash.
+If a customer paid by M-Pesa just as the connection dropped, the server finishes that payment by itself once the internet returns (every 2 minutes),
+and records the sale. If the cashier had already taken cash for the same goods, the payment is **held for a manager** instead (M-Pesa tab and Fraud tab),
+so nothing is sold twice and nothing is lost.
+
+## Offline M-Pesa: the Checkout button
+The cashier screen has an **Online / Offline** button. It shows Offline by itself when the system cannot reach Safaricom, and the cashier can also press it
+to work offline by hand (for example if a customer's phone cannot receive a prompt).
+- **Online:** the cashier presses **Send M-Pesa prompt**. Safaricom confirms the payment and the system records the sale.
+- **Offline:** the prompt button is off. The customer shows their M-Pesa message; the cashier checks it, types the 10-character **code** and the **amount**, and presses
+  **Checkout**. The sale is recorded as *unverified*.
+- **Afterwards** the admin opens **M-Pesa**, compares each code with the M-Pesa statement and marks it **Verified** or **Disputed**. The same code can never be used twice.
+- The fraud engine flags: a manual payment taken while the system was online, one left unchecked for 24 hours, a disputed one, and a cashier using it 3 or more times in a day.
+- Switch it off with `SMARTPOS_MANUAL_MPESA=off`; change the per-payment limit with `SMARTPOS_MANUAL_MPESA_MAX`. The Export tab has a "Manual M-Pesa confirmations" file for checking.
+
 ## Back up and export
 ```
 python3 backup.py                       # safe backup into backups/
@@ -58,6 +79,9 @@ Admins can also download Excel-ready CSVs from the **Export** tab.
 | `exporter.py` | Excel/CSV export |
 | `index.html` | The whole interface |
 | `migrate_csv.py` | One-time CSV to database import |
+| `accounts.py` | Password, username and lockout rules for staff accounts |
+| `reset_admin.py` | Emergency tool: set a new password for a forgotten admin |
+| `connectivity.py` | Checks whether Safaricom is reachable (the Online / No internet label) |
 | `hardware/` | Receipt printer (ESC/POS) and cash drawer |
 | `fraud/` | Fraud detection engine (reads POS data, writes findings only) |
 | `tests/` | Automated tests |

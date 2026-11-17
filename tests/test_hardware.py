@@ -1,4 +1,5 @@
 """Hardware tests: receipt layout, printer connections, print rules. A fake printer (a local network socket) stands in for the real one."""
+# Hardware tests. A fake printer (a small network listener) stands in for the real one, so receipts and the drawer command can be checked without any device.
 import os, socket, tempfile, threading, time, unittest
 from datetime import datetime, timedelta
 
@@ -12,6 +13,7 @@ SALE = dict(receipt_no="R2611100001", created_at="2026-11-10T14:05:09", cashier_
                    dict(product_name="Bread 400g", qty=1, unit_price="55.00", line_total="55.00")])
 
 
+# Listens like a network receipt printer and keeps whatever it is sent.
 class FakePrinter:
     """Listens like a network receipt printer and keeps what it is sent."""
 
@@ -48,6 +50,7 @@ class FakePrinter:
         self.srv.close()
 
 
+# What a printed receipt looks like: widths, wrapping, accents, cut and drawer commands, duplicates.
 class ReceiptLayout(unittest.TestCase):
     def test_lines_fit_the_paper_and_amounts_line_up(self):
         for width in (48, 32):
@@ -89,6 +92,7 @@ class ReceiptLayout(unittest.TestCase):
         self.assertNotIn("Cash received", text)
 
 
+# How bytes reach a printer, and the error messages when it cannot be reached.
 class Connections(unittest.TestCase):
     def test_network_printer_receives_the_bytes(self):
         fp = FakePrinter()
@@ -111,6 +115,7 @@ class Connections(unittest.TestCase):
             printer.send(b"x", "carrier-pigeon:coop")
 
 
+# The print rules inside the POS: who may print, the drawer, duplicates, logging.
 class PrintingInThePos(Base):
     def setUp(self):
         super().setUp()

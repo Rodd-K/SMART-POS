@@ -4,6 +4,13 @@
 
 They use a temporary database and a fake Daraja, so your real data and keys are never touched.
 Run them before every commit. All tests must pass."""
+# =====================================================================================================
+# HOW THE TESTS WORK
+# Each test builds a fresh temporary database, does something (a sale, a bad sign-in, an export...) and checks the result.
+# Your real data and keys are never touched. Run them all before every commit:  python3 -m unittest discover -s tests -v
+# TO ADD A TEST: copy a similar one, change what it does and what it expects. Base gives you self.admin, self.cashier,
+# self.api(user, method, path, body) and helpers like self.cash_sale(...).
+# =====================================================================================================
 import glob, json, os, re, shutil, subprocess, sys, tempfile, threading, unittest, urllib.error, urllib.request
 from http.server import ThreadingHTTPServer
 
@@ -11,10 +18,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ.update(MPESA_MODE="sandbox", MPESA_CONSUMER_KEY="k", MPESA_CONSUMER_SECRET="s", MPESA_PASSKEY="p", MPESA_SHORTCODE="174379",
                   MPESA_TILL="174379", MPESA_CALLBACK_URL="https://example.test", MPESA_CALLBACK_SECRET="testsecret")
+os.environ["SMARTPOS_DEMO"] = "1"  # the tests use the demo accounts and sample products
 os.environ["SMARTPOS_DB"] = os.path.join(tempfile.mkdtemp(), "unused.db")
-import db, mpesa, server, exporter  # noqa: E402
+import connectivity, db, mpesa, server, exporter  # noqa: E402
 
 
+# Catches broken files before they reach the browser: leftover merge-conflict lines, Python syntax errors, broken JavaScript.
 class FileHealth(unittest.TestCase):
     """Catches broken merges before they reach the browser."""
 
@@ -47,6 +56,7 @@ class FileHealth(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+# The shared set-up: a fresh database with the demo accounts, plus a fake Daraja so no real request is sent.
 class Base(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -58,9 +68,11 @@ class Base(unittest.TestCase):
         self.admin, self.cashier = self.user("admin"), self.user("cashier")
         self.pushes = 0
         self._push, mpesa.stk_push = mpesa.stk_push, self.fake_push
+        self._online, connectivity.online = connectivity.online, (lambda *args, **kw: True)  # tests pretend the internet is up
 
     def tearDown(self):
         mpesa.stk_push = self._push
+        connectivity.online = self._online
         self.c.close()
         shutil.rmtree(self.dir, ignore_errors=True)
 
@@ -90,6 +102,7 @@ class Base(unittest.TestCase):
         return self.c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
+# Who is allowed to do what.
 class AccessAndRoles(Base):
     def test_login(self):
         self.assertEqual(server.login(self.c, {"username": "admin", "password": "wrong"})[0], 401)
@@ -108,6 +121,7 @@ class AccessAndRoles(Base):
         self.assertTrue(rows and all("cost" not in r for r in rows))
 
 
+# The sale itself: totals, stock, duplicate protection, overselling.
 class Sales(Base):
     def test_cash_sale_updates_everything(self):
         p = self.product("White Bread 400g")
@@ -156,6 +170,7 @@ class Sales(Base):
         self.assertEqual(self.stock_of(p["id"]), 0)
 
 
+# Creating, editing and deleting products, and what the database refuses.
 class StockManagement(Base):
     def test_create_edit_delete_are_recorded(self):
         code, p = self.api(self.admin, "POST", "/api/products", {"name": "Widget", "category": "Test", "price": "5", "cost": "2", "stock": 10})
@@ -182,6 +197,7 @@ class StockManagement(Base):
             self.c.execute("UPDATE products SET stock=-1")
 
 
+# The M-Pesa payment rules (nothing is recorded until payment is confirmed).
 class MpesaFlow(Base):
     def start(self, ref="m1", qty=2):
         p = self.product("Soda 500ml")
@@ -236,6 +252,7 @@ class MpesaFlow(Base):
         self.assertIsNone(mpesa.norm("12345"))
 
 
+# Real web requests to a running test server: pages, sign-in, exports.
 class HttpAndExport(Base):
     def setUp(self):
         super().setUp()

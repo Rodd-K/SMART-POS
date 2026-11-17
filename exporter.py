@@ -55,6 +55,11 @@ DATASETS = {
         ["Date/Time", "User", "Action", "Details"],
         "SELECT created_at, user_name, action, details FROM audit_log {w} ORDER BY created_at, rowid",
         "created_at"),
+    "mpesa_manual": (  # payments the cashier confirmed by hand when there was no internet: compare them with the M-Pesa statement
+        ["Time", "Cashier", "Receipt", "M-Pesa code", "Phone", "Amount (KES)", "Taken while the system was online", "Status", "Checked by", "Checked on", "Note"],
+        "SELECT m.created_at, u.name, s.receipt_no, m.code, m.phone, " + _m("m.amount_cents") + ", CASE m.online_when_taken WHEN 1 THEN 'yes' ELSE 'no' END, "
+        "m.status, m.checked_by, m.checked_at, m.note FROM mpesa_manual m JOIN users u ON u.id=m.cashier_id JOIN sales s ON s.id=m.sale_id {w} ORDER BY m.created_at",
+        "m.created_at"),
     "fraud": (  # the date range applies to when the suspicious activity happened
         ["Date/Time of activity", "Found on", "Person", "Rule", "Finding", "Score", "Risk level", "Reason", "Status", "Decided by", "Decided on", "Manager note"],
         "SELECT event_time, created_at, subject, rule, title, score, " + _level("score") + ", reason, status, reviewed_by, reviewed_at, note "

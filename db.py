@@ -134,6 +134,33 @@ CREATE TABLE fraud_events(
 CREATE INDEX idx_fraud_status ON fraud_events(status, created_at);
 CREATE INDEX idx_fraud_subject ON fraud_events(subject);
 """,
+    # 3 = staff accounts: forced password change, lockout after wrong passwords, last sign-in, and a small settings table (the business name).
+    3: """
+ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN failed_logins INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN locked_until TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN last_login TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN password_changed_at TEXT NOT NULL DEFAULT '';
+CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);   -- small business settings, for example business_name
+""",
+    # 4 = M-Pesa payments the cashier confirmed BY EYE when there was no internet. They are always "unverified" until a manager
+    # compares them with the M-Pesa statement. The code is UNIQUE so the same M-Pesa message can never pay for two sales.
+    4: """
+CREATE TABLE mpesa_manual(
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  sale_id TEXT NOT NULL REFERENCES sales(id),
+  cashier_id TEXT NOT NULL REFERENCES users(id),
+  code TEXT NOT NULL UNIQUE,                 -- the M-Pesa confirmation code the cashier read from the customer's message
+  phone TEXT NOT NULL DEFAULT '',
+  amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
+  online_when_taken INTEGER NOT NULL,        -- 1 = the system COULD reach Safaricom, but the cashier chose Offline anyway (a warning sign)
+  status TEXT NOT NULL DEFAULT 'unverified' CHECK(status IN ('unverified','verified','disputed')),
+  checked_by TEXT NOT NULL DEFAULT '',
+  checked_at TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '');
+CREATE INDEX idx_manual_status ON mpesa_manual(status, created_at);
+""",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

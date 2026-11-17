@@ -1,4 +1,5 @@
 """Fraud engine tests. Each rule must fire on its scenario and stay quiet on normal behaviour."""
+# Fraud tests. Each rule must fire on its own scenario and stay quiet on normal behaviour. Helpers like add_sale() and add_move() insert test records directly with chosen dates.
 import csv, io, itertools, os, tempfile, unittest, zipfile
 from datetime import datetime, timedelta
 
@@ -14,6 +15,7 @@ def ts(days_ago=0, hour=12, minute=0):
     return d.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat(timespec="seconds")
 
 
+# Helpers that create sales, stock movements and payments at a chosen time, and run the scan.
 class FraudBase(Base):
     def add_sale(self, when, cents=10000, user=None):
         u, n = user or self.cashier, next(_n)
@@ -38,6 +40,7 @@ class FraudBase(Base):
         return self.c.execute(q, a).fetchall()
 
 
+# One test per rule: what makes it fire, and what must NOT.
 class Rules(FraudBase):
     def test_a_normal_day_raises_nothing(self):
         for h in (9, 11, 14, 17):
@@ -118,6 +121,7 @@ class Rules(FraudBase):
         self.assertEqual(self.scan(), 0)
 
 
+# How the engine behaves: no duplicates, never changes business records, risk scoring.
 class Behaviour(FraudBase):
     def test_running_twice_does_not_duplicate(self):
         self.add_move(ts(0, 10), -30)
@@ -162,6 +166,7 @@ class Behaviour(FraudBase):
             self.c.execute("UPDATE fraud_events SET status='guilty'")
 
 
+# The admin Fraud tab behind the scenes: list, scan, decisions, admin-only.
 class FraudScreen(FraudBase):
     """The admin Fraud tab: list, scan, decisions. Admin only, and never touches business records."""
 
@@ -227,6 +232,7 @@ class FraudScreen(FraudBase):
         self.assertEqual(self.api(self.admin, "GET", "/api/dashboard")[1]["fraud_new"], 0)
 
 
+# The fraud report and summary on the Export page.
 class FraudReports(FraudBase):
     """The fraud report and summary on the Export page."""
 
@@ -277,17 +283,21 @@ class FraudReports(FraudBase):
         self.assertIsNone(exporter.run(self.c, "fraud_summary", {"from": ["2026-12-01"], "to": ["2026-01-01"]}))
 
 
+# An older database receives the fraud table when the software is updated.
 class DatabaseUpgrade(unittest.TestCase):
-    def test_existing_database_gets_the_fraud_table(self):
+    def test_a_version_1_database_receives_every_later_upgrade(self):
         path = os.path.join(tempfile.mkdtemp(), "old.db")
-        c = db.init(path)
-        c.execute("DROP TABLE fraud_events")  # make it look like a database from before this module
+        c = db.connect(path)
+        c.executescript(db.SCHEMA)  # exactly what a database from before the fraud module looked like
         c.execute("PRAGMA user_version=1")
         c.close()
-        c = db.init(path)
+        c = db.init(path)  # the software is updated: the missing upgrades run, once each
         self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0], db.SCHEMA_VERSION)
-        self.assertEqual(c.execute("SELECT COUNT(*) FROM fraud_events").fetchone()[0], 0)
-
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM fraud_events").fetchone()[0], 0)  # upgrade 2
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM settings").fetchone()[0], 0)  # upgrade 3
+        self.assertEqual(c.execute("SELECT COUNT(*) FROM mpesa_manual").fetchone()[0], 0)  # upgrade 4
+        self.assertIn("must_change_password", [r[1] for r in c.execute("PRAGMA table_info(users)")])
+        db.init(path).close()  # starting again must change nothing and must not fail
 
     def test_clear_message_when_db_py_is_out_of_date(self):
         c = db.connect(os.path.join(tempfile.mkdtemp(), "v1.db"))

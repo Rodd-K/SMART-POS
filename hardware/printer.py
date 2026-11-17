@@ -9,16 +9,23 @@ Choose the connection with SMARTPOS_PRINTER (in the .env file):
 Other settings: SMARTPOS_PRINTER_WIDTH (48 for 80 mm paper, 32 for 58 mm), SMARTPOS_BUSINESS_NAME, SMARTPOS_BUSINESS_LINES
 (address and phone separated by |), SMARTPOS_RECEIPT_FOOTER, SMARTPOS_DRAWER (1 or 0), SMARTPOS_DRAWER_PIN (0 or 1),
 SMARTPOS_AUTOPRINT (1 prints the receipt as soon as a sale completes)."""
+# =====================================================================================================
+# Sends the finished bytes to the printer. How it is reached depends on SMARTPOS_PRINTER in the .env file:
+#   network:IP   over the network (Ethernet or Wi-Fi printers)      cups:Name    a Linux/Mac printer, sent raw
+#   file:/dev/usb/lp0  a USB printer used directly on Linux          windows:Name a Windows printer, sent raw
+# =====================================================================================================
 import os
 import socket
 import subprocess
 import sys
 
 
+# Raised with a plain-English message whenever the printer cannot be reached; the page shows it to the user.
 class PrinterError(Exception):
     pass
 
 
+# Reads the printer and shop settings from the .env file each time, so a restart is all that is needed after editing it.
 def settings():
     e = os.environ.get
     try:
@@ -32,11 +39,13 @@ def settings():
                 autoprint=e("SMARTPOS_AUTOPRINT", "0") == "1")
 
 
+# True when a printer type has been chosen.
 def configured():
     spec = settings()["spec"]
     return bool(spec) and spec.lower() != "none"
 
 
+# Windows only: sends raw bytes through the Windows print spooler. NOT yet tested on a real Windows machine.
 def _send_windows(name, data):
     if sys.platform != "win32":
         raise PrinterError("Windows printers can only be used on Windows.")
@@ -64,6 +73,7 @@ def _send_windows(name, data):
         spool.ClosePrinter(h)
 
 
+# Sends bytes to the printer chosen in SMARTPOS_PRINTER. Every failure becomes a PrinterError with a helpful message.
 def send(data, spec=None):
     spec = settings()["spec"] if spec is None else spec
     if not spec or spec.lower() == "none":
