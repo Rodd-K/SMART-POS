@@ -1,4 +1,5 @@
-"""Windows desktop launcher for the packaged SmartPOS application."""
+cat > desktop_windows.py <<'PY'
+"""Windows desktop launcher for SmartPOS, with startup diagnostics."""
 
 import os
 import sys
@@ -6,17 +7,12 @@ import time
 import socket
 import subprocess
 import urllib.request
+import traceback
 from pathlib import Path
 
 HOST = "127.0.0.1"
 PORT = 8000
 URL = f"http://{HOST}:{PORT}"
-
-
-def application_directory():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
 
 
 def prepare_environment():
@@ -25,17 +21,18 @@ def prepare_environment():
         Path.home() / "AppData" / "Local"
     )) / "SmartPOS"
 
-    app_data.mkdir(parents=True, exist_ok=True)
+    logs = app_data / "logs"
+    storage = app_data / "webview"
+
+    logs.mkdir(parents=True, exist_ok=True)
+    storage.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
     env["SMARTPOS_DB"] = str(app_data / "smartpos.db")
     env["SMARTPOS_CONFIG_DIR"] = str(app_data)
     env.setdefault("SMARTPOS_DEMO", "0")
 
-    storage = app_data / "webview"
-    storage.mkdir(parents=True, exist_ok=True)
-
-    return env, storage
+    return env, storage, logs
 
 
 def port_in_use():
@@ -43,9 +40,13 @@ def port_in_use():
         return sock.connect_ex((HOST, PORT)) == 0
 
 
-def wait_for_server(process):
+def wait_for_server(process, log_file):
     for _ in range(80):
         if process.poll() is not None:
+            log_file.write(
+                f"\nBackend exited with code: {process.returncode}\n"
+            )
+            log_file.flush()
             raise RuntimeError("SmartPOS backend stopped unexpectedly.")
 
         try:
@@ -59,54 +60,74 @@ def wait_for_server(process):
 
 
 def main():
-    if port_in_use():
-        raise RuntimeError(
-            "Port 8000 is already in use. Close the other SmartPOS instance."
-        )
+    env, storage, logs = prepare_environment()
+    log_path = logs / "server.log"
 
-    app_dir = application_directory()
-    server_exe = app_dir / "SmartPOS_Server.exe"
-
-    if not server_exe.is_file():
-        raise FileNotFoundError(f"Backend executable not found: {server_exe}")
-
-    env, storage = prepare_environment()
     server = None
 
-    try:
-        server = subprocess.Popen(
-            [str(server_exe)],
-            cwd=str(app_dir),
-            env=env,
-        )
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write("\n\n===== SmartPOS startup =====\n")
+        log_file.flush()
 
-        wait_for_server(server)
+        try:
+            if port_in_use():
+                raise RuntimeError("Port 8000 is already in use.")
 
-        import webview
+            app_dir = Path(sys.executable).resolve().parent
+            server_exe = app_dir / "SmartPOS_Server.exe"
 
-        webview.create_window(
-            "SmartPOS",
-            URL,
-            width=1280,
-            height=800,
-            min_size=(1024, 650),
-        )
+            if not server_exe.is_file():
+                raise FileNotFoundError(
+                    f"Backend executable not found: {server_exe}"
+                )
 
-        webview.start(
-            gui="edgechromium",
-            private_mode=False,
-            storage_path=str(storage),
-        )
+            log_file.write(f"Starting backend: {server_exe}\n")
+            log_file.flush()
 
-    finally:
-        if server and server.poll() is None:
-            server.terminate()
-            try:
-                server.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                server.kill()
-                server.wait()
+            server = subprocess.Popen(
+                [str(server_exe)],
+                cwd=str(app_dir),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                creationflags=getattr(
+                    subprocess, "CREATE_NO_WINDOW", 0
+                ),
+            )
+
+            wait_for_server(server, log_file)
+
+            import webview
+
+            webview.create_window(
+                "SmartPOS",
+                URL,
+                width=1280,
+                height=800,
+                min_size=(1024, 650),
+            )
+
+            webview.start(
+                gui="edgechromium",
+                private_mode=False,
+                storage_path=str(storage),
+            )
+
+        except Exception:
+            traceback.print_exc(file=log_file)
+            log_file.flush()
+            raise
+
+        finally:
+            if server and server.poll() is None:
+                server.terminate()
+                try:
+                    server.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+                    server.wait()
 
 
 if __name__ == "__main__":
     main()
+PY
