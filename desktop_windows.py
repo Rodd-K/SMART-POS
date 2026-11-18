@@ -1,4 +1,3 @@
-cat > desktop_windows.py <<'PY'
 """Windows desktop launcher for SmartPOS, with startup diagnostics."""
 
 import os
